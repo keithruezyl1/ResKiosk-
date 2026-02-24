@@ -1,0 +1,297 @@
+openapi: 3.0.3
+info:
+  title: ResKiosk Hub API
+  version: 0.1.0
+  description: Offline-first disaster information system Hub API
+paths:
+  /health:
+    get:
+      summary: System health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /admin/ping:
+    get:
+      summary: Lightweight ping for connectivity checks
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  hub_version:
+                    type: string
+                    example: '0.1'
+  /network/info:
+    get:
+      summary: Get Hub network configuration
+      responses:
+        '200':
+          description: Network Info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkInfo'
+  /kb/version:
+    get:
+      summary: Get current Knowledge Base version
+      responses:
+        '200':
+          description: KB Version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kb_version:
+                    type: integer
+                  updated_at:
+                    type: string
+                    format: date-time
+  /kb/snapshot:
+    get:
+      summary: Download full KB snapshot
+      responses:
+        '200':
+          description: Full Snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KBSnapshot'
+  /admin/article:
+    post:
+      summary: Create new KB article
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KBArticleCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KBArticle'
+  /admin/article/{id}:
+    put:
+      summary: Update existing article
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KBArticleUpdate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KBArticle'
+    delete:
+      summary: Delete article
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Deleted
+  /admin/config/{key}:
+    put:
+      summary: Update system config value
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - value
+              properties:
+                value:
+                  type: object
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StructuredConfig'
+  /query:
+    post:
+      summary: Submit user query
+      description: Returns Phase 1 Placeholder (no retrieval yet)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+      responses:
+        '200':
+          description: Query Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+
+components:
+  schemas:
+    NetworkInfo:
+      type: object
+      properties:
+        ip:
+          type: string
+        port:
+          type: integer
+    KBArticle:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        body:
+          type: string
+        category:
+          type: string
+        tags:
+          type: string # JSON string as per requirement, or array? Spec says "JSON string" in DB, usually list in API. Let's use List[str] in API and serialize in DB. Wait, prompt says "tags (JSON string)" for DB. API usually returns structured. Let's return List[str].
+          # Actually, prompts says "tags (JSON string)" under DB fields. For API it implies standard JSON.
+        status:
+          type: string
+          enum: [draft, published]
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    KBArticleCreate:
+      type: object
+      required:
+        - title
+        - body
+        - category
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+        category:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [draft, published]
+        enabled:
+          type: boolean
+    KBArticleUpdate:
+      type: object
+      properties: # All optional
+        title:
+          type: string
+        body:
+          type: string
+        category:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+        enabled:
+          type: boolean
+    StructuredConfig:
+      type: object
+      properties:
+        key:
+          type: string
+        value:
+          type: object # Any JSON
+        updated_at:
+          type: string
+          format: date-time
+    KBSnapshot:
+      type: object
+      properties:
+        kb_version:
+          type: integer
+        articles:
+          type: array
+          items:
+            $ref: '#/components/schemas/KBArticle'
+        structured_config:
+          type: object # Map of key -> value
+    QueryRequest:
+      type: object
+      required:
+        - center_id
+        - kiosk_id
+        - transcript_original
+        - language
+      properties:
+        center_id:
+          type: string
+        kiosk_id:
+          type: string
+        transcript_original:
+          type: string
+        transcript_english:
+          type: string
+        language:
+          type: string
+        kb_version:
+          type: integer
+    QueryResponse:
+      type: object
+      properties:
+        answer_text_en:
+          type: string
+        answer_type:
+          type: string
+        confidence:
+          type: number
+        kb_version:
+          type: integer
+        clarification_categories:
+          type: array
+          items:
+            type: string
+          nullable: true

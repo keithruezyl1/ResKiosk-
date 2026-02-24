@@ -1,0 +1,30 @@
+venv/
+__pycache__/
+*.pyc
+
+# Build / dist outputs
+dist/
+build/
+kiosk/app/build/
+
+# IDE / editor
+.idea/
+.vscode/
+.DS_Store
+
+# Logs
+*.log
+
+# Node modules
+node_modules/
+
+# Gradle caches
+kiosk/.gradle/
+
+# Local model bundles and Ollama data
+packaging/hub_models/
+packaging/ollama_portable/
+
+/TO RUN
+*TO RUN
+

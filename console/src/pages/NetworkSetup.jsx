@@ -1,0 +1,141 @@
+import React, { useState, useEffect } from 'react';
+import hubClient from '../api/hubClient';
+import { QRCodeSVG } from 'qrcode.react';
+import { Copy, RefreshCw } from 'lucide-react';
+
+function NetworkSetup() {
+    const [netInfo, setNetInfo] = useState({ ip: '...', port: 8000 });
+    const [loading, setLoading] = useState(true);
+
+    const fetchInfo = async () => {
+        try {
+            setLoading(true);
+            const res = await hubClient.get('/network/info');
+            setNetInfo(res.data);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchInfo();
+        const interval = setInterval(fetchInfo, 10000);
+        return () => clearInterval(interval);
+    }, []);
+
+    const hubUrl = `http://${netInfo.ip}:${netInfo.port}`;
+
+    return (
+        <div className="space-y-6">
+            <h1 className="page-title">Network Setup</h1>
+
+            <div className="grid-2">
+                {/* Hub URL Card */}
+                <div className="hub-url-card">
+                    <h3>Hub URL</h3>
+                    <div className="hub-url-display">
+                        <code>{hubUrl}</code>
+                        <button
+                            className="btn btn-sm"
+                            onClick={() => navigator.clipboard.writeText(hubUrl)}
+                            title="Copy to clipboard"
+                        >
+                            <Copy size={16} />
+                        </button>
+                    </div>
+                    <p className="text-sm mt-2" style={{ color: 'var(--primary)' }}>Enter this URL in Kiosk setup.</p>
+                </div>
+
+                {/* QR Code */}
+                <div className="card qr-card">
+                    <h3>Scan to Connect</h3>
+                    <div className="p-4 bg-white rounded border" style={{ display: 'inline-block' }}>
+                        <QRCodeSVG value={hubUrl} size={150} />
+                    </div>
+                </div>
+            </div>
+
+            {/* Network Configuration */}
+            <div className="card space-y-4">
+                <h3 className="section-title">Configuration</h3>
+
+                <div className="form-group">
+                    <label>Network Mode</label>
+                    <select className="input" style={{ maxWidth: '24rem' }}>
+                        <option>Using existing Wi-Fi (Recommended)</option>
+                        <option>Hub Hosting Hotspot (Standalone)</option>
+                    </select>
+                </div>
+
+                <div className="form-group">
+                    <label>Static IP Override (Optional)</label>
+                    <input className="input" style={{ maxWidth: '24rem' }} placeholder="e.g. 192.168.1.100" />
+                    <p className="form-hint">Leave empty to use automatic detection.</p>
+                </div>
+
+                <div className="form-group">
+                    <label>Firewall Status</label>
+                    <div className="flex items-center gap-2">
+                        <span className="status-dot warning"></span>
+                        <span className="text-sm">Unknown (check manually)</span>
+                    </div>
+                </div>
+
+                <button className="btn btn-primary">Save Network Settings</button>
+            </div>
+
+            {/* Connected Kiosks */}
+            <div className="card">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="section-title" style={{ border: 'none', margin: 0, padding: 0 }}>
+                        Connected Kiosks ({netInfo.connected_kiosks || 0})
+                    </h3>
+                    <button className="btn btn-sm" onClick={fetchInfo}>
+                        <RefreshCw size={14} /> Refresh
+                    </button>
+                </div>
+                <div style={{ overflow: 'auto' }}>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Kiosk ID</th>
+                                <th>Kiosk Name</th>
+                                <th>IP Address</th>
+                                <th>Last Seen</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(!netInfo.kiosks_list || netInfo.kiosks_list.length === 0) ? (
+                                <tr>
+                                    <td colSpan="5" className="empty-state">
+                                        No kiosks connected yet.
+                                    </td>
+                                </tr>
+                            ) : (
+                                netInfo.kiosks_list.map((kiosk) => (
+                                    <tr key={kiosk.kiosk_id}>
+                                        <td style={{ fontWeight: 500 }}>{kiosk.kiosk_id}</td>
+                                        <td>{kiosk.kiosk_name || kiosk.kiosk_id}</td>
+                                        <td className="font-mono text-sm">{kiosk.ip}</td>
+                                        <td className="text-sm text-muted">{new Date(kiosk.last_seen + 'Z').toLocaleTimeString()}</td>
+                                        <td>
+                                            <span className="flex items-center gap-2">
+                                                <span className={`status-dot ${kiosk.status === 'online' ? 'online' : 'offline'}`}></span>
+                                                <span className="text-sm">{kiosk.status}</span>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+export default NetworkSetup;

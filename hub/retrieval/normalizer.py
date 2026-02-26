@@ -21,6 +21,25 @@ _HUB_CORRECTIONS = {
     "nine pm": "9 pm",
     "eight am": "8 am",
     "eight pm": "8 pm",
+    # Domain-specific phrasing normalizations for shelter questions.
+    # These help align translated / spoken variants with how KB articles are titled.
+    "where is food being served": "where is food served",
+    "where is the food being served": "where is food served",
+    "where do we eat": "where is food served",
+    "where can i eat": "where is food served",
+    "where is food served here": "where is food served",
+    "how do i register": "how do i register for the shelter",
+    "how do i sign up": "how do i register for the shelter",
+    "where do i sign up": "how do i register for the shelter",
+    "where is registration": "where do i register",
+    "where do i register": "where do i register",
+    "where is medical": "where is the medical area",
+    "where is the clinic": "where is the medical area",
+    "i need medical": "i need medical help",
+    "i need a doctor": "i need medical help",
+    "where can i sleep": "where is the sleeping area",
+    "where do we sleep": "where is the sleeping area",
+    "where are the beds": "where is the sleeping area",
 }
 
 

@@ -1,13 +1,13 @@
-import asyncio
-import json
-import logging
 import time
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from hub.db.session import get_db
 from hub.db import schema
 from hub.models.api_models import EmergencyRequest
+import asyncio
+import json
+import logging
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -29,9 +29,9 @@ async def _broadcast(event: dict):
 
 
 def _alert_to_dict(alert: schema.EmergencyAlert, db: Session) -> dict:
-    """Build alert dict; join kiosk_registry for current kiosk_name, fall back to kiosk_location."""
-    reg = db.query(schema.KioskRegistry).filter(schema.KioskRegistry.kiosk_id == alert.kiosk_id).first()
-    display_name = (reg.kiosk_name or alert.kiosk_location) if reg else alert.kiosk_location
+    """Build alert dict; join kiosk table for kiosk_name, fall back to kiosk_location."""
+    kiosk = db.query(schema.Kiosk).filter(schema.Kiosk.kiosk_id == alert.kiosk_id).first()
+    display_name = (kiosk.kiosk_name or alert.kiosk_location) if kiosk else alert.kiosk_location
     return {
         "id": alert.id,
         "kiosk_id": alert.kiosk_id,
@@ -45,12 +45,12 @@ def _alert_to_dict(alert: schema.EmergencyAlert, db: Session) -> dict:
 
 @router.post("/emergency")
 async def receive_emergency(payload: EmergencyRequest, db: Session = Depends(get_db)):
-    # Resolve hub_id if not provided (current hub)
+    # Resolve hub_id from the Hub table if not provided
     hub_id = payload.hub_id
     if not hub_id:
-        hi = db.query(schema.HubIdentity).filter(schema.HubIdentity.id == 1).first()
-        if hi:
-            hub_id = hi.hub_id
+        hub_row = db.query(schema.Hub).first()
+        if hub_row:
+            hub_id = str(hub_row.hub_id)
 
     alert = schema.EmergencyAlert(
         kiosk_id=payload.kiosk_id,
@@ -65,7 +65,6 @@ async def receive_emergency(payload: EmergencyRequest, db: Session = Depends(get
     db.commit()
     db.refresh(alert)
 
-    # Broadcast for SSE; use same join logic for kiosk_name
     event = _alert_to_dict(alert, db)
     event["type"] = "EMERGENCY_ALERT"
     event["alert_id"] = alert.id
@@ -113,9 +112,7 @@ def get_active_emergencies(db: Session = Depends(get_db)):
         .order_by(schema.EmergencyAlert.timestamp.desc())
         .all()
     )
-    return {
-        "alerts": [_alert_to_dict(a, db) for a in alerts],
-    }
+    return {"alerts": [_alert_to_dict(a, db) for a in alerts]}
 
 
 @router.post("/emergency/{alert_id}/resolve")

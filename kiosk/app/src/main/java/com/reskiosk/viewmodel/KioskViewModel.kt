@@ -29,6 +29,8 @@ import java.util.UUID
 // States
 sealed class KioskState {
     object Idle : KioskState()
+    /** Brief state after tap-to-speak until mic is actually capturing (min delay so user doesn't speak too early). */
+    object PreparingToListen : KioskState()
     object Listening : KioskState()
     object Transcribing : KioskState()
     object Processing : KioskState()
@@ -41,12 +43,44 @@ sealed class KioskState {
 }
 
 // Data class for Chat Frame
-data class ChatMessage(val isUser: Boolean, val text: String, val id: String = "")
+data class ChatMessage(
+    val isUser: Boolean,
+    val text: String,
+    val id: String = "",
+    /** Non-null for assistant messages that came from a KB article and can be rated. */
+    val queryLogId: Int? = null,
+    val sourceId: Int? = null,
+    /** null = not yet rated, true = liked, false = disliked */
+    val feedbackGiven: Boolean? = null,
+    /** Original English query text that produced this response (for correct dislike-retry). */
+    val queryTextEnglish: String? = null,
+    /** Original transcript that produced this response. */
+    val queryTextOriginal: String? = null,
+    /** Accumulated exclude_source_ids at the time this response was generated. */
+    val excludeSourceIds: List<Int>? = null,
+)
 
 // Extension to convert ALL-CAPS STT output to proper sentence case
 private fun String.toSentenceCase(): String {
     if (isBlank()) return this
     return lowercase().replaceFirstChar { it.uppercase() }
+}
+
+/** Batch (Whisper) languages: no live transcript; use "Listening..." placeholder and min-length guard. */
+private fun isBatchLanguage(lang: String): Boolean = lang in listOf("es", "de", "fr")
+
+/** Whisper internal silence markers only (no real words like sonido/sound/noise/ruido). */
+private fun isSilenceOnly(transcript: String): Boolean {
+    if (transcript.isBlank()) return true
+    val normalized = transcript
+        .replace(Regex("[\\[\\]\\(\\)]"), "")
+        .lowercase()
+        .trim()
+    if (normalized.isEmpty()) return true
+    val silenceTokens = setOf(
+        "sil", "silence", "audio en blanco", "silencio", "blank audio", "audio silencioso"
+    )
+    return normalized in silenceTokens
 }
 
 
@@ -69,10 +103,12 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
     private val _chatHistory = MutableStateFlow<List<ChatMessage>>(emptyList())
     val chatHistory = _chatHistory.asStateFlow()
 
+
     // Inactivity auto-timeout
     private var inactivityJob: Job? = null
     private val INACTIVITY_TIMEOUT_MS = 60_000L  // 1 minute
 
+    @Volatile
     private var _punctuator: OfflinePunctuation? = null
 
     init {
@@ -81,37 +117,39 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
             ?: UUID.randomUUID().toString().also { prefs.edit().putString("kiosk_id", it).apply() }
         HubApiClient.setKioskId(kioskId)
 
-        // Start heartbeat if URL exists
+        // Start heartbeat if URL exists (runs on IO so it never blocks UI)
         if (getHubUrl().isNotBlank()) {
             startHeartbeat()
         }
         
-        // Initialize punctuation model
-        try {
-            val punctDir = File(application.filesDir, "sherpa-models/" + com.reskiosk.ModelConstants.PUNCTUATION_DIR)
-            if (punctDir.exists()) {
-                val modelPath = File(punctDir, "model.onnx").absolutePath
-                val config = OfflinePunctuationConfig(
-                    model = OfflinePunctuationModelConfig(
-                        ctTransformer = modelPath,
-                        numThreads = 1,
-                        debug = false,
-                        provider = "cpu"
+        // Load punctuation model on background thread to avoid blocking main thread and triggering ANR
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val punctDir = File(application.filesDir, "sherpa-models/" + com.reskiosk.ModelConstants.PUNCTUATION_DIR)
+                if (punctDir.exists()) {
+                    val modelPath = File(punctDir, "model.onnx").absolutePath
+                    val config = OfflinePunctuationConfig(
+                        model = OfflinePunctuationModelConfig(
+                            ctTransformer = modelPath,
+                            numThreads = 1,
+                            debug = false,
+                            provider = "cpu"
+                        )
                     )
-                )
-                _punctuator = OfflinePunctuation(assetManager = null, config = config)
-                Log.i("KioskVM", "Punctuation model loaded successfully.")
-            } else {
-                Log.w("KioskVM", "Punctuation model directory not found.")
+                    _punctuator = OfflinePunctuation(assetManager = null, config = config)
+                    Log.i("KioskVM", "Punctuation model loaded successfully.")
+                } else {
+                    Log.w("KioskVM", "Punctuation model directory not found.")
+                }
+            } catch (e: Exception) {
+                Log.e("KioskVM", "Failed to load punctuation model", e)
             }
-        } catch (e: Exception) {
-            Log.e("KioskVM", "Failed to load punctuation model", e)
         }
     }
 
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
-        heartbeatJob = viewModelScope.launch {
+        heartbeatJob = viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 val url = getHubUrl()
                 if (url.isNotBlank()) {
@@ -142,26 +180,62 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
     )
     val selectedLanguage = _selectedLanguage.asStateFlow()
 
+    private val _isChangingLanguage = MutableStateFlow(false)
+    val isChangingLanguage = _isChangingLanguage.asStateFlow()
+
     fun setLanguage(langCode: String) {
+        if (langCode == _selectedLanguage.value) return
         _selectedLanguage.value = langCode
+        _isChangingLanguage.value = true
         Log.i("KioskVM", "Language set to: $langCode")
 
         // Persist selection
         prefs.edit().putString("selected_language", langCode).apply()
 
+        // NS: en/ja keep suppression; es/de/fr get raw mic for Whisper
+        recorder.setNoiseSuppressionEnabled(langCode == "en" || langCode == "ja")
+        val needRestart = _sessionId.value != null
+        val currentState = _uiState.value
+        val busy = currentState is KioskState.PreparingToListen || currentState is KioskState.Listening || currentState is KioskState.Transcribing
+        if (needRestart) {
+            if (busy) {
+                pendingRecorderRestart = true
+            } else {
+                recorder.stopContinuousListening()
+                recorder.startContinuousListening(viewModelScope)
+            }
+        }
+
         // Rebuild STT/TTS engine for selected language on a background thread
-        // to prevent UI freezing while loading heavy ONNX models
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val oldStt = stt
-            stt = null // Disable listening temporarily
+            stt = null
             oldStt?.release()
             stt = SherpaSttEngine.forLanguage(getApplication(), langCode)
-            
             val oldTts = tts
             tts = null
             oldTts?.release()
             tts = SherpaTtsEngine.forLanguage(getApplication(), langCode)
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                _isChangingLanguage.value = false
+                Log.i("KioskVM", "Language engines ready for: $langCode")
+            }
         }
+    }
+
+    /** If a recorder restart was deferred (language change during Recording/Transcribing), do it now. */
+    private fun performPendingRecorderRestartIfNeeded() {
+        if (!pendingRecorderRestart || _sessionId.value == null) return
+        pendingRecorderRestart = false
+        recorder.stopContinuousListening()
+        recorder.startContinuousListening(viewModelScope)
+    }
+
+    /** Remove the "Listening..." placeholder from chat history (batch UX) and clear the stored id. Call from Main only. */
+    private fun removeListeningPlaceholderIfAny() {
+        val id = currentListeningPlaceholderId ?: return
+        currentListeningPlaceholderId = null
+        _chatHistory.value = _chatHistory.value.filter { it.id != id }
     }
 
     // Dependencies — STT uses factory for language-aware model selection
@@ -173,6 +247,16 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
     private var recordedSamples: MutableList<Float> = Collections.synchronizedList(mutableListOf())
     private var lastQueryEnglish: String? = null
     private var lastQueryOriginal: String? = null
+
+    /** Defer recorder restart until Idle when language changed during Recording/Transcribing */
+    private var pendingRecorderRestart = false
+    /** UUID of the "Listening..." user message for batch languages; replaced with transcript in processAudio() */
+    private var currentListeningPlaceholderId: String? = null
+    /** Cancel this to abort the delay before actually entering Listening (PreparingToListen). */
+    private var startListeningJob: Job? = null
+    /** For batch: true after first real audio chunk (after pre-buffer skip). Used to add "Listening..." only when we confirm we're hearing. */
+    @Volatile
+    private var hasReceivedRealAudio = false
 
     // Preferences
 
@@ -218,8 +302,10 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         _sessionId.value = UUID.randomUUID().toString()
         _chatHistory.value = emptyList()
         _uiState.value = KioskState.Idle
-        // Start continuous background listening for instant zero-latency STT
+        recorder.setNoiseSuppressionEnabled(_selectedLanguage.value == "en" || _selectedLanguage.value == "ja")
         recorder.startContinuousListening(viewModelScope)
+
+
         resetInactivityTimer()
     }
 
@@ -230,6 +316,8 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         _chatHistory.value = emptyList()
         _uiState.value = KioskState.Idle
         _transcript.value = ""
+
+
         
         // Notify Hub to clear memory
         if (currentSession != null) {
@@ -251,7 +339,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startListening() {
         if (stt == null) {
-            handleError("Changing language... please wait.")
+            Log.w("KioskVM", "startListening blocked: STT engine not ready (language change in progress)")
             return
         }
         // Allow recording from Idle, Speaking, Error, and Clarification; block Emergency and busy states
@@ -267,23 +355,45 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         try { recorder.stopRecording() } catch (e: Exception) {}
         tts?.stop()
         recorder.clearPreBuffer()
+        // New question about to start: hide any previous feedback button until we have a fresh answer
 
-        viewModelScope.launch {
-            delay(150) // Let residual speaker output dissipate before capturing
+
+        _uiState.value = KioskState.PreparingToListen
+        startListeningJob = viewModelScope.launch {
+            delay(150) // Let residual speaker output dissipate before capturing; show loading until then
             if (!isActive) return@launch
             _uiState.value = KioskState.Listening
+            startListeningJob = null
             _transcript.value = ""
             recordedSamples = Collections.synchronizedList(mutableListOf())
+            hasReceivedRealAudio = false
+
             resetInactivityTimer()
             stt?.beginStream()
+            var skipNextChunk = isBatchLanguage(_selectedLanguage.value)
+            val lang = _selectedLanguage.value
             recorder.startRecording { chunk ->
+                if (skipNextChunk) {
+                    skipNextChunk = false
+                    return@startRecording
+                }
+                // Chunk-based confirmation for batch: add "Listening..." on first real chunk only (on Main)
+                if (isBatchLanguage(lang) && !hasReceivedRealAudio) {
+                    hasReceivedRealAudio = true
+                    viewModelScope.launch(Dispatchers.Main) {
+                        removeListeningPlaceholderIfAny()
+                        val listeningText = EmergencyStrings.get("listening", _selectedLanguage.value)
+                        _chatHistory.value = _chatHistory.value.filter { it.text != listeningText }
+                        val listeningId = UUID.randomUUID().toString()
+                        currentListeningPlaceholderId = listeningId
+                        _chatHistory.value = _chatHistory.value + ChatMessage(isUser = true, text = listeningText, id = listeningId)
+                    }
+                }
                 synchronized(recordedSamples) {
-                    // 5-minute cap — eliminates any risk of truncation for long utterances
                     if (recordedSamples.size < 16000 * 300) {
                         recordedSamples.addAll(chunk.toList())
                     }
                 }
-                // Live streaming STT — partial results update the transcript in real time
                 val partialRaw = stt?.feedAndDecodeStream(chunk)
                 if (!partialRaw.isNullOrBlank()) {
                     _transcript.value = partialRaw.toSentenceCase()
@@ -293,17 +403,21 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopListening() {
-        if (_uiState.value != KioskState.Listening) return
-
-        recorder.stopRecording()
-        _uiState.value = KioskState.Transcribing
-
-        resetInactivityTimer()
-
-        // Continuous listener stays running in background 
-        // to fill the ring buffer for the next tap
-
-        processAudio()
+        when (val s = _uiState.value) {
+            is KioskState.PreparingToListen -> {
+                startListeningJob?.cancel()
+                startListeningJob = null
+                _uiState.value = KioskState.Idle
+            }
+            is KioskState.Listening -> {
+                recorder.stopRecording()
+                _uiState.value = KioskState.Transcribing
+                resetInactivityTimer()
+                // Continuous listener stays running in background for next tap
+                processAudio()
+            }
+            else -> { /* no-op */ }
+        }
     }
 
     fun selectClarification(category: String) {
@@ -319,6 +433,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         try { stt?.finishStream() } catch (e: Exception) {}
         _transcript.value = ""
         _uiState.value = KioskState.Idle
+        performPendingRecorderRestartIfNeeded()
     }
 
     // --- Emergency (see Section 1.1 for inactivity/timer behavior) ---
@@ -360,11 +475,13 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelEmergency() {
         _uiState.value = KioskState.Idle
+        performPendingRecorderRestartIfNeeded()
         resetInactivityTimer()
     }
 
     fun dismissEmergency() {
         _uiState.value = KioskState.Idle
+        performPendingRecorderRestartIfNeeded()
         resetInactivityTimer()
     }
 
@@ -376,10 +493,111 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun sendFeedbackLike(messageId: String) {
+        val message = _chatHistory.value.find { it.id == messageId } ?: return
+        // sourceId must be present; queryLogId is required only for the network POST
+        if (message.sourceId == null) return
+
+        // Fire-and-forget UI update: dismiss buttons immediately
+        _chatHistory.value = _chatHistory.value.map {
+            if (it.id == messageId) it.copy(feedbackGiven = true) else it
+        }
+
+        val qLogId = message.queryLogId ?: return   // skip network POST if no log id
+        val hubUrl = getHubUrl()
+        if (hubUrl.isBlank()) return
+
+        // Fire-and-forget network request
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val api = HubApiClient.getService(hubUrl)
+                val kioskId = prefs.getString("kiosk_id", null) ?: "unknown"
+                val payload = mutableMapOf<String, Any?>(
+                    "query_log_id" to qLogId,
+                    "label" to 1, // +1 for liked
+                    "language" to _selectedLanguage.value,
+                    "session_id" to _sessionId.value,
+                    "kiosk_id" to kioskId,
+                    "center_id" to "center_1",
+                )
+                message.sourceId?.let { src -> payload["source_id"] = src }
+                api.feedback(payload)
+            } catch (e: Exception) {
+                Log.e("KioskVM", "Feedback POST failed (like)", e)
+            }
+        }
+    }
+
+    /**
+     * User disliked the response. Mark it as disliked, then submit negative feedback
+     * and retry the exact original query with the sourceId excluded.
+     */
+    fun sendFeedbackDislike(messageId: String) {
+        val message = _chatHistory.value.find { it.id == messageId } ?: return
+        // sourceId must be present; queryLogId only needed for network POST
+        if (message.sourceId == null) return
+        val qLogId = message.queryLogId
+        val qEn = message.queryTextEnglish ?: return
+        val qOrg = message.queryTextOriginal ?: qEn
+
+        // Fire-and-forget UI update: dismiss buttons immediately
+        _chatHistory.value = _chatHistory.value.map {
+            if (it.id == messageId) it.copy(feedbackGiven = false) else it
+        }
+
+        val hubUrl = getHubUrl()
+        if (hubUrl.isBlank()) return
+
+        // Submit negative feedback (only if we have a query_log_id)
+        if (qLogId != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val api = HubApiClient.getService(hubUrl)
+                    val kioskId = prefs.getString("kiosk_id", null) ?: "unknown"
+                    val payload = mutableMapOf<String, Any?>(
+                        "query_log_id" to qLogId,
+                        "label" to -1, // -1 for disliked
+                        "language" to _selectedLanguage.value,
+                        "session_id" to _sessionId.value,
+                        "kiosk_id" to kioskId,
+                        "center_id" to "center_1",
+                    )
+                    message.sourceId?.let { src -> payload["source_id"] = src }
+                    api.feedback(payload)
+                } catch (e: Exception) {
+                    Log.e("KioskVM", "Feedback POST failed (dislike)", e)
+                }
+            }
+        }
+
+        // Accumulate excludes (what we previously excluded + what we are disliking now)
+        val excludeIds = (message.excludeSourceIds ?: emptyList()).toMutableSet()
+        message.sourceId?.let { excludeIds.add(it) }
+
+        // Retry the query
+        viewModelScope.launch(Dispatchers.Main) {
+            val placeholderId = "hub_" + System.currentTimeMillis()
+            val newList = _chatHistory.value.toMutableList()
+            newList.add(ChatMessage(isUser = false, text = EmergencyStrings.get("retrieving_new_response", _selectedLanguage.value), id = placeholderId))
+            _chatHistory.value = newList
+            performQuery(
+                queryEnglish = qEn,
+                queryOriginal = qOrg,
+                isRetry = true,
+                category = null,
+                placeholderId = placeholderId,
+                queryType = "statement",
+                intonationConfidence = 0f,
+                excludeSourceIds = excludeIds.toList(),
+            )
+        }
+    }
+
     // --- Logic ---
 
     private fun processAudio() {
         viewModelScope.launch(Dispatchers.IO) {
+            val lang = _selectedLanguage.value
             try {
                 val samples: FloatArray
                 synchronized(recordedSamples) {
@@ -388,10 +606,20 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("KioskVM", "Recorded ${samples.size} samples (${samples.size / 16000f}s)")
 
                 // 0.3s minimum — short enough for "food?", "water?", "help!"
-                // but long enough to reject accidental button taps
                 if (samples.size < (16000 * 0.3f).toInt()) {
                     withContext(Dispatchers.Main) {
-                        handleError("Recording was too short. Please hold the button longer.")
+                        removeListeningPlaceholderIfAny()
+                        handleError(EmergencyStrings.get("recording_too_short", lang))
+                    }
+                    stt?.finishStream()
+                    return@launch
+                }
+
+                // Batch (Whisper): 2s minimum for reliable output
+                if (isBatchLanguage(lang) && samples.size < 32000) {
+                    withContext(Dispatchers.Main) {
+                        removeListeningPlaceholderIfAny()
+                        handleError(EmergencyStrings.get("recording_too_short", lang))
                     }
                     stt?.finishStream()
                     return@launch
@@ -401,13 +629,15 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("KioskVM", "STT raw transcript: '$transcriptRaw'")
 
                 if (transcriptRaw.isBlank()) {
-                    withContext(Dispatchers.Main) { handleError("I didn't hear anything. Please try again.") }
+                    withContext(Dispatchers.Main) {
+                        removeListeningPlaceholderIfAny()
+                        handleError(EmergencyStrings.get("didnt_hear", lang))
+                    }
                     return@launch
                 }
 
                 // Post-process: corrections + optional punctuation
                 // Punctuation only for Zipformer path (en, ja) — Whisper already produces punctuated text
-                val lang = _selectedLanguage.value
                 val useZipformerPunct = (lang == "en" || lang == "ja")
                 val transcriptProcessed = com.reskiosk.stt.SttPostProcessor.process(
                     transcriptRaw,
@@ -416,8 +646,20 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d("STT", "Raw:       $transcriptRaw")
                 Log.d("STT", "Corrected: $transcriptProcessed")
 
+                // Whisper silence markers only (no real words like sonido/sound/noise/ruido)
+                if (isSilenceOnly(transcriptProcessed)) {
+                    withContext(Dispatchers.Main) {
+                        removeListeningPlaceholderIfAny()
+                        handleError(EmergencyStrings.get("didnt_hear", lang))
+                    }
+                    return@launch
+                }
+
                 if (transcriptProcessed.isBlank()) {
-                    withContext(Dispatchers.Main) { handleError("I didn't catch that. Please try again.") }
+                    withContext(Dispatchers.Main) {
+                        removeListeningPlaceholderIfAny()
+                        handleError(EmergencyStrings.get("didnt_catch", lang))
+                    }
                     return@launch
                 }
 
@@ -450,8 +692,16 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                     _transcript.value = transcriptProcessed
                     _uiState.value = KioskState.Processing
                     val placeholderId = "hub_" + System.currentTimeMillis()
+                    val listeningId = currentListeningPlaceholderId
+                    currentListeningPlaceholderId = null
                     val newList = _chatHistory.value.toMutableList()
-                    newList.add(ChatMessage(isUser = true, text = transcriptProcessed))
+                    if (listeningId != null) {
+                        val idx = newList.indexOfFirst { it.id == listeningId }
+                        if (idx >= 0) newList[idx] = ChatMessage(isUser = true, text = transcriptProcessed, id = listeningId)
+                        else newList.add(ChatMessage(isUser = true, text = transcriptProcessed))
+                    } else {
+                        newList.add(ChatMessage(isUser = true, text = transcriptProcessed))
+                    }
                     newList.add(ChatMessage(isUser = false, text = "Asking hub...", id = placeholderId))
                     _chatHistory.value = newList
                     lastQueryEnglish = transcriptProcessed
@@ -467,21 +717,31 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
 
             } catch (e: Exception) {
                 Log.e("KioskVM", "System Error", e)
-                withContext(Dispatchers.Main) { handleError("System Error: ${e.message}") }
+                withContext(Dispatchers.Main) {
+                    removeListeningPlaceholderIfAny()
+                    handleError("System Error: ${e.message}")
+                }
             }
         }
     }
 
     private fun performQuery(
-        queryEnglish: String, queryOriginal: String, isRetry: Boolean,
-        category: String? = null, placeholderId: String? = null,
-        queryType: String = "statement", intonationConfidence: Float = 0f
+        queryEnglish: String,
+        queryOriginal: String,
+        isRetry: Boolean,
+        category: String? = null,
+        placeholderId: String? = null,
+        queryType: String = "statement",
+        intonationConfidence: Float = 0f,
+        excludeSourceIds: List<Int>? = null,
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val hubUrl = prefs.getString("hub_url", "") ?: ""
                 if (hubUrl.isBlank()) {
-                    withContext(Dispatchers.Main) { handleError("Hub not configured. Please connect to a Hub first.") }
+                    withContext(Dispatchers.Main) {
+                        handleError("Hub not configured. Please connect to a Hub first.")
+                    }
                     return@launch
                 }
 
@@ -500,6 +760,9 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 if (category != null) payload["selected_category"] = category
                 if (_sessionId.value != null) payload["session_id"] = _sessionId.value!!
+                if (!excludeSourceIds.isNullOrEmpty()) {
+                    payload["exclude_source_ids"] = excludeSourceIds
+                }
 
                 Log.i("KioskVM", "Sending query to hub: ${queryEnglish.take(80)}")
                 val queryStart = System.currentTimeMillis()
@@ -519,19 +782,39 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                             response.clarificationCategories ?: emptyList()
                         )
                         tts?.speak(clarificationQuestion)
+
                         resetInactivityTimer()
                     } else {
                         val finalAnswer = response.answerTextLocalized
                             ?: response.answerTextEn
                             ?: "I'm sorry, I couldn't find an answer."
+
                         if (placeholderId != null) {
                             _chatHistory.value = _chatHistory.value.map {
-                                if (it.id == placeholderId) ChatMessage(isUser = false, text = finalAnswer) else it
+                                if (it.id == placeholderId) ChatMessage(
+                                        isUser = false,
+                                        text = finalAnswer,
+                                        id = placeholderId, // keep same id
+                                        queryLogId = response.queryLogId,
+                                        sourceId = response.sourceId,
+                                        queryTextEnglish = queryEnglish,
+                                        queryTextOriginal = queryOriginal,
+                                        excludeSourceIds = excludeSourceIds
+                                ) else it
                             }
                         } else {
                             val newList = _chatHistory.value.toMutableList()
                             newList.add(ChatMessage(isUser = true, text = queryOriginal))
-                            newList.add(ChatMessage(isUser = false, text = finalAnswer))
+                            newList.add(ChatMessage(
+                                isUser = false,
+                                text = finalAnswer,
+                                id = UUID.randomUUID().toString(),
+                                queryLogId = response.queryLogId,
+                                sourceId = response.sourceId,
+                                queryTextEnglish = queryEnglish,
+                                queryTextOriginal = queryOriginal,
+                                excludeSourceIds = excludeSourceIds
+                            ))
                             _chatHistory.value = newList
                         }
                         speakAndShow(finalAnswer)
@@ -559,11 +842,13 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleError(msg: String) {
         _uiState.value = KioskState.Error(msg)
         tts?.speak(msg)
+
         // Auto-reset to Idle after 3s so user can record again
         viewModelScope.launch {
             delay(3000L)
             if (_uiState.value is KioskState.Error) {
                 _uiState.value = KioskState.Idle
+                performPendingRecorderRestartIfNeeded()
             }
         }
     }
@@ -581,6 +866,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
             delay(500L) // Brief pause after speech ends
             if (_uiState.value is KioskState.Speaking) {
                 _uiState.value = KioskState.Idle
+                performPendingRecorderRestartIfNeeded()
             }
             resetInactivityTimer()
         }

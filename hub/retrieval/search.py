@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 import numpy as np
 from sqlalchemy.orm import Session
@@ -17,25 +18,32 @@ INTENT_ENRICHMENT = {
     "identity": "kiosk assistant information",
     "capability": "help information services",
     "small_talk": "thanks okay",
-    "food": "food meals schedule cafeteria breakfast lunch dinner",
-    "medical": "medical doctor nurse health first aid",
-    "registration": "registration sign in check in intake",
-    "sleeping": "sleeping beds cots rest area",
-    "transportation": "bus shuttle transport ride leave",
-    "safety": "safety emergency evacuation exit",
-    "facilities": "bathroom restroom showers laundry charging wifi",
-    "lost_person": "lost missing family reunification",
-    "pets": "pets dog cat animal",
-    "donations": "donate donations",
-    "hours": "hours open close schedule",
-    "location": "address location directions building",
-    "general_info": "information services help",
-    "goodbye": "goodbye bye",
+    # Core shelter intents enriched with realistic query language.
+    "food": "food meals schedule cafeteria canteen dining eat breakfast lunch dinner snacks",
+    "medical": "medical doctor nurse health clinic first aid medicine",
+    "registration": "registration sign up sign-up sign in check in intake wristband id card",
+    "sleeping": "sleeping beds cots rest area sleeping area dormitory",
+    "transportation": "bus shuttle transport ride leave departure",
+    "safety": "safety emergency evacuation exit fire earthquake",
+    "facilities": "bathroom restroom showers laundry charging wifi toilet",
+    "lost_person": "lost missing family reunification missing person",
+    "pets": "pets dog cat animal pet area",
+    "donations": "donate donations donation drop off",
+    "hours": "hours open close schedule opening closing time",
+    "location": "address location directions building map",
+    "general_info": "information services help questions",
+    "goodbye": "goodbye bye thanks",
     "inventory": "supplies available stock food water medicine blankets hygiene clothing diapers charging cots",
 }
 
-THRESHOLD = float(os.environ.get("RESKIOSK_SIM_THRESHOLD", 0.65))
-CLARIFICATION_FLOOR = float(os.environ.get("RESKIOSK_CLARIFICATION_FLOOR", 0.45))
+# Default thresholds tuned for realistic shelter questions; can still be overridden via env.
+THRESHOLD = float(os.environ.get("RESKIOSK_SIM_THRESHOLD", 0.60))
+CLARIFICATION_FLOOR = float(os.environ.get("RESKIOSK_CLARIFICATION_FLOOR", 0.40))
+
+# RLHF / bias settings (env-gated)
+RLHF_ENABLED = os.environ.get("RESKIOSK_RLHF_ENABLED", "false").lower() == "true"
+RLHF_ALPHA = float(os.environ.get("RESKIOSK_RLHF_ALPHA", 0.10))
+RLHF_BIAS_TTL_SECS = int(os.environ.get("RESKIOSK_RLHF_BIAS_TTL_SECS", 1800))
 
 # Intent classifier singleton, set by main.py at startup
 _intent_classifier = None
@@ -83,12 +91,23 @@ _shelter_config_cache = None
 
 
 def get_shelter_config(db: Session) -> dict:
-    """Load full structured_config as dict; cached and invalidated on publish."""
+    """Load evac_info row as a flat dict; cached and invalidated on publish."""
     global _shelter_config_cache
     if _shelter_config_cache is not None:
         return _shelter_config_cache
-    rows = db.query(schema.StructuredConfig).all()
-    _shelter_config_cache = {r.key: r.get_value() for r in rows}
+    row = db.query(schema.EvacInfo).filter(schema.EvacInfo.id == 1).first()
+    if row:
+        _shelter_config_cache = {
+            "food_schedule": row.food_schedule,
+            "sleeping_zones": row.sleeping_zones,
+            "medical_station": row.medical_station,
+            "registration_steps": row.registration_steps,
+            "announcements": row.announcements,
+            "emergency_mode": row.emergency_mode,
+            "metadata": row.info_metadata,
+        }
+    else:
+        _shelter_config_cache = {}
     return _shelter_config_cache
 
 
@@ -99,15 +118,44 @@ def invalidate_shelter_config_cache():
     logger.info("[Cache] Shelter config cache invalidated.")
 
 
+# --- RLHF article-bias cache (TTL-based) ---
+_article_biases_cache = None
+_article_biases_loaded_at = 0.0
+
+
+def _load_article_biases(db: Session) -> dict:
+    """Load all article biases from DB into a simple dict {source_id: bias}."""
+    rows = db.query(schema.ArticleBias).all()
+    biases = {row.source_id: float(row.bias) for row in rows}
+    logger.info(f"[RLHF] Loaded {len(biases)} article biases from DB.")
+    return biases
+
+
+def _get_article_biases(db: Session) -> dict:
+    """Return cached article biases, reloading from DB when TTL expires."""
+    global _article_biases_cache, _article_biases_loaded_at
+    now = time.time()
+    if (
+        _article_biases_cache is None
+        or _article_biases_loaded_at == 0.0
+        or now - _article_biases_loaded_at > RLHF_BIAS_TTL_SECS
+    ):
+        _article_biases_cache = _load_article_biases(db)
+        _article_biases_loaded_at = now
+    return _article_biases_cache or {}
+
+
 def _snapshot_article(art: schema.KBArticle) -> dict:
     """Eagerly copy all needed fields from an ORM object into a plain dict.
-    This prevents DetachedInstanceError when the cache outlives the session."""
+    Prevents DetachedInstanceError when the cache outlives the session."""
+    raw_tags = getattr(art, "tags", "") or ""
+    tags_list = [t.strip() for t in raw_tags.split(",") if t.strip()]
     return {
         "id": art.id,
-        "title": art.title,
-        "body": art.body,
+        "question": art.question,
+        "answer": art.answer,
         "category": art.category,
-        "tags": art.get_tags() if hasattr(art, 'get_tags') else [],
+        "tags": tags_list,
     }
 
 
@@ -119,7 +167,7 @@ def _load_corpus(db: Session) -> dict:
     if _corpus_cache is not None:
         return _corpus_cache
     
-    articles = db.query(schema.KBArticle).filter(schema.KBArticle.enabled == True).all()
+    articles = db.query(schema.KBArticle).filter(schema.KBArticle.enabled == 1).all()
     embeddings = []
     meta = []
     for art in articles:
@@ -138,29 +186,17 @@ def _load_corpus(db: Session) -> dict:
     return _corpus_cache
 
 
-def retrieve(db: Session, query_english: str, is_retry: bool, selected_category: Optional[str] = None) -> dict:
+def retrieve(
+    db: Session,
+    query_english: str,
+    is_retry: bool,
+    selected_category: Optional[str] = None,
+    exclude_source_ids: Optional[List[int]] = None,
+) -> dict:
     normalized_query = normalize_query(query_english)
-    logger.info(f"[Retrieve] query='{normalized_query}'")
+    logger.info(f"[Retrieve] query='{normalized_query}' exclude_source_ids={exclude_source_ids}")
 
-    # 1. Direct Config Match
-    config_match = db.query(schema.StructuredConfig).filter(schema.StructuredConfig.key == normalized_query).first()
-    if config_match:
-        try:
-            val_str = str(config_match.get_value())
-            return {
-                "answer_text": val_str,
-                "answer_type": "DIRECT_MATCH",
-                "confidence": 1.0,
-                "source_id": None,
-                "categories": None,
-                "article_data": None,
-                "intent": "unclear",
-                "intent_confidence": 0.0,
-            }
-        except Exception as e:
-            logger.warning(f"[Retrieve] Config get_value failed for key={normalized_query}: {e}")
-
-    # 2. Inventory check (phrase triggers; no embedding)
+    # 1. Inventory check (phrase triggers; no embedding)
     try:
         shelter_config = get_shelter_config(db)
         inventory_answer = inventory_module.check_inventory(normalized_query, shelter_config)
@@ -296,6 +332,36 @@ def retrieve(db: Session, query_english: str, is_retry: bool, selected_category:
             "intent_confidence": intent_confidence,
         }
 
+    # Keep a copy of raw cosine scores for logging and analysis.
+    raw_scores = scores.copy()
+    rlhf_top_source_id = None
+    rlhf_top_score = None
+
+    # Apply RLHF bias adjustment when enabled; otherwise leave scores unchanged.
+    if RLHF_ENABLED:
+        try:
+            biases = _get_article_biases(db)
+            article_ids = [art["id"] for art in corpus["articles"]]
+            for i, art_id in enumerate(article_ids):
+                b = biases.get(art_id, 0.0)
+                adj = float(raw_scores[i]) + RLHF_ALPHA * b
+                # Clamp to cosine range [0, 1]
+                scores[i] = max(0.0, min(1.0, adj))
+            if len(scores) > 0:
+                best_idx = int(np.argmax(scores))
+                rlhf_top_source_id = article_ids[best_idx]
+                rlhf_top_score = float(scores[best_idx])
+        except Exception as e:
+            logger.exception("[RLHF] Bias application failed; falling back to raw cosine scores")
+            scores = raw_scores
+
+    if not RLHF_ENABLED or rlhf_top_source_id is None:
+        # RLHF disabled or failed: default RLHF shadow fields to raw-cosine top-1.
+        if len(raw_scores) > 0:
+            raw_best_idx = int(np.argmax(raw_scores))
+            rlhf_top_source_id = corpus["articles"][raw_best_idx]["id"]
+            rlhf_top_score = float(raw_scores[raw_best_idx])
+
     top_indices = np.argsort(scores)[::-1][:5]
     top_k_results = []
     for idx in top_indices:
@@ -304,7 +370,41 @@ def retrieve(db: Session, query_english: str, is_retry: bool, selected_category:
         top_k_results.append(RetrievalResult(art_dict, score))
 
     for i, r in enumerate(top_k_results[:3]):
-        logger.info(f"[Search] #{i+1} score={r.score:.4f} title='{r.article['title'][:60]}' cat={r.category}")
+        logger.info(f"[Search] #{i+1} score={r.score:.4f} question='{r.article['question'][:60]}' cat={r.category}")
+
+    # Raw best score (for logging) uses raw cosine; gating may use adjusted scores.
+    if len(raw_scores) > 0:
+        try:
+            best_raw_score = float(raw_scores[int(np.argmax(raw_scores))])
+        except Exception:
+            best_raw_score = float(best.score)
+    else:
+        # Fallback: no scores (should not normally happen here)
+        best_raw_score = 0.0
+
+    # Apply kiosk-provided excludes (for feedback "next result" flow)
+    if exclude_source_ids:
+        exclude_set = set(exclude_source_ids)
+        pre_filter_ids = [r.article["id"] for r in top_k_results]
+        logger.info(f"[Search] EXCLUDE: exclude_set={exclude_set} top_k_ids_before={pre_filter_ids}")
+        top_k_results = [r for r in top_k_results if r.article["id"] not in exclude_set]
+        post_filter_ids = [r.article["id"] for r in top_k_results]
+        logger.info(f"[Search] EXCLUDE: top_k_ids_after={post_filter_ids} (removed {len(pre_filter_ids) - len(post_filter_ids)})")
+        if not top_k_results:
+            # All top results excluded: fall back to generic NO_MATCH while preserving logging fields.
+            return {
+                "answer_text": "I am here to answer questions about registration, food, medical help, sleeping areas, transportation, safety, and other services in this shelter. Please ask about one of these topics or see a volunteer for more help.",
+                "answer_type": "NO_MATCH",
+                "confidence": best_raw_score,
+                "confidence_raw": best_raw_score,
+                "source_id": None,
+                "categories": None,
+                "article_data": None,
+                "intent": intent,
+                "intent_confidence": intent_confidence,
+                "rlhf_top_source_id": rlhf_top_source_id,
+                "rlhf_top_score": rlhf_top_score,
+            }
 
     best = top_k_results[0]
 
@@ -316,19 +416,22 @@ def retrieve(db: Session, query_english: str, is_retry: bool, selected_category:
     # 6. Gating: >= 0.65 DIRECT_MATCH; 0.45-0.65 use best; < 0.45 + unclear -> clarify; else NO_MATCH
     if best.score >= THRESHOLD:
         return {
-            "answer_text": best.article["body"],
+            "answer_text": best.article["answer"],
             "answer_type": "DIRECT_MATCH",
             "confidence": best.score,
+            "confidence_raw": best_raw_score,
             "source_id": best.article["id"],
             "categories": None,
             "article_data": {
-                "title": best.article["title"],
-                "body": best.article["body"],
+                "question": best.article["question"],
+                "answer": best.article["answer"],
                 "category": best.article["category"],
                 "tags": best.article.get("tags", [])
             },
             "intent": intent,
             "intent_confidence": intent_confidence,
+            "rlhf_top_source_id": rlhf_top_source_id,
+            "rlhf_top_score": rlhf_top_score,
         }
 
     if best.score >= CLARIFICATION_FLOOR and clarify:
@@ -339,39 +442,48 @@ def retrieve(db: Session, query_english: str, is_retry: bool, selected_category:
             "answer_text": "Please clarify.",
             "answer_type": "NEEDS_CLARIFICATION",
             "confidence": best.score,
+            "confidence_raw": best_raw_score,
             "source_id": best.article["id"],
             "clarification_categories": cats,
             "categories": cats,
             "article_data": None,
             "intent": intent,
             "intent_confidence": intent_confidence,
+            "rlhf_top_source_id": rlhf_top_source_id,
+            "rlhf_top_score": rlhf_top_score,
         }
 
     # 0.45-0.65: use best match; < 0.45 or no clarify: fixed fallback
     if best.score >= CLARIFICATION_FLOOR:
         return {
-            "answer_text": best.article["body"],
+            "answer_text": best.article["answer"],
             "answer_type": "DIRECT_MATCH",
             "confidence": best.score,
+            "confidence_raw": best_raw_score,
             "source_id": best.article["id"],
             "categories": None,
             "article_data": {
-                "title": best.article["title"],
-                "body": best.article["body"],
+                "question": best.article["question"],
+                "answer": best.article["answer"],
                 "category": best.article["category"],
                 "tags": best.article.get("tags", [])
             },
             "intent": intent,
             "intent_confidence": intent_confidence,
+            "rlhf_top_source_id": rlhf_top_source_id,
+            "rlhf_top_score": rlhf_top_score,
         }
 
     return {
         "answer_text": "I am here to answer questions about registration, food, medical help, sleeping areas, transportation, safety, and other services in this shelter. Please ask about one of these topics or see a volunteer for more help.",
         "answer_type": "NO_MATCH",
         "confidence": best.score,
+        "confidence_raw": best_raw_score,
         "source_id": None,
         "categories": None,
         "article_data": None,
         "intent": intent,
         "intent_confidence": intent_confidence,
+        "rlhf_top_source_id": rlhf_top_source_id,
+        "rlhf_top_score": rlhf_top_score,
     }

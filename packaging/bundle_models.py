@@ -3,16 +3,21 @@ import sys
 import time
 import shutil
 import subprocess
+import tempfile
 import requests
 from pathlib import Path
 
+# Avoid Windows symlink warning and related code paths when downloading to local_dir
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 # -----------------------------------------------------------------------
-# Configuration
+# Configuration (paths resolved from script location so they work from any cwd)
 # -----------------------------------------------------------------------
-HUB_MODELS_DIR  = Path("packaging/hub_models")
-NLLB_DIR        = HUB_MODELS_DIR / "nllb"
-OLLAMA_PORTABLE_DIR = Path("packaging/ollama_portable")
-OLLAMA_MODELS_DIR   = OLLAMA_PORTABLE_DIR / "models"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+HUB_MODELS_DIR = _PROJECT_ROOT / "packaging" / "hub_models"
+NLLB_DIR = HUB_MODELS_DIR / "nllb"
+OLLAMA_PORTABLE_DIR = _PROJECT_ROOT / "packaging" / "ollama_portable"
+OLLAMA_MODELS_DIR = OLLAMA_PORTABLE_DIR / "models"
 
 OLLAMA_LLM_MODEL = "llama3.2:3b"
 
@@ -28,8 +33,7 @@ def bundle_minilm():
     try:
         snapshot_download(
             repo_id="sentence-transformers/all-MiniLM-L6-v2",
-            local_dir=str(HUB_MODELS_DIR),
-            local_dir_use_symlinks=False,
+            local_dir=str(HUB_MODELS_DIR.resolve()),
             ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
         )
         print("MiniLM bundled.\n")
@@ -60,13 +64,24 @@ def bundle_nllb():
     print("Bundling NLLB-200-distilled-600M (server translation)...")
     print("This is ~1.2 GB — may take a few minutes...")
     NLLB_DIR.mkdir(parents=True, exist_ok=True)
+    ignore_patterns = ["*.msgpack", "*.h5", "flax_model*", "tf_model*", "rust_model*"]
     try:
-        snapshot_download(
-            repo_id="facebook/nllb-200-distilled-600M",
-            local_dir=str(NLLB_DIR),
-            local_dir_use_symlinks=False,
-            ignore_patterns=["*.msgpack", "*.h5", "flax_model*", "tf_model*", "rust_model*"],
-        )
+        # Download to a temp cache then copy to NLLB_DIR so we always get real files
+        # (avoids Windows local_dir/symlink issues that can leave the folder empty)
+        with tempfile.TemporaryDirectory(prefix="reskiosk_nllb_") as tmp_cache:
+            snapshot_path = snapshot_download(
+                repo_id="facebook/nllb-200-distilled-600M",
+                cache_dir=tmp_cache,
+                ignore_patterns=ignore_patterns,
+            )
+            for item in Path(snapshot_path).iterdir():
+                dst = NLLB_DIR / item.name
+                if item.is_dir():
+                    if dst.exists():
+                        shutil.rmtree(dst)
+                    shutil.copytree(item, dst)
+                else:
+                    shutil.copy2(item, dst)
         print("NLLB-200 bundled.\n")
     except Exception as e:
         print("ERROR: Failed to download NLLB-200-distilled-600M from Hugging Face.")

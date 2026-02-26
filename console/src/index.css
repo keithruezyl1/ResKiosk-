@@ -356,6 +356,15 @@ select.input:focus {
   line-height: 1.5;
 }
 
+.config-section-title {
+  display: block;
+  font-size: 1.125rem;
+  font-weight: 800;
+  color: var(--text-main);
+  margin-bottom: 1.5rem;
+  letter-spacing: -0.01em;
+}
+
 label {
   font-size: 0.875rem;
   font-weight: 500;
@@ -372,6 +381,60 @@ label {
   font-size: 0.75rem;
   color: var(--text-muted);
   margin-top: 0.25rem;
+}
+
+.row-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.row-action-btn:hover {
+  background: var(--bg-main);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.row-action-btn.danger:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.add-row-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem 0;
+  margin-top: 0.5rem;
+}
+
+.add-row-trigger:hover {
+  opacity: 0.8;
+}
+
+.dynamic-row {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-bottom: 1rem;
+}
+
+.dynamic-row>.form-group {
+  flex: 1;
 }
 
 .checkbox-row {
@@ -436,155 +499,6 @@ label {
   100% {
     opacity: 1;
   }
-}
-
-/* ─── Emergency Alert Modal ─── */
-.emergency-modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(120, 0, 0, 0.55);
-  backdrop-filter: blur(6px);
-  animation: emergencyOverlayIn 0.3s ease-out;
-}
-
-@keyframes emergencyOverlayIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-.emergency-modal {
-  background: #1a1010;
-  border: 2px solid #ff1744;
-  border-radius: 16px;
-  padding: 2.5rem 3rem;
-  max-width: 480px;
-  width: 90%;
-  text-align: center;
-  box-shadow:
-    0 0 40px rgba(255, 23, 68, 0.4),
-    0 0 80px rgba(255, 23, 68, 0.2),
-    0 8px 32px rgba(0, 0, 0, 0.6);
-  animation: emergencyModalIn 0.35s ease-out, emergencyGlow 2s ease-in-out infinite;
-}
-
-@keyframes emergencyModalIn {
-  from { opacity: 0; transform: scale(0.85) translateY(20px); }
-  to   { opacity: 1; transform: scale(1) translateY(0); }
-}
-
-@keyframes emergencyGlow {
-  0%, 100% { box-shadow: 0 0 40px rgba(255, 23, 68, 0.4), 0 0 80px rgba(255, 23, 68, 0.2), 0 8px 32px rgba(0, 0, 0, 0.6); border-color: #ff1744; }
-  50%      { box-shadow: 0 0 60px rgba(255, 23, 68, 0.7), 0 0 120px rgba(255, 23, 68, 0.35), 0 8px 32px rgba(0, 0, 0, 0.6); border-color: #ff5252; }
-}
-
-.emergency-modal-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: rgba(255, 23, 68, 0.15);
-  color: #ff1744;
-  margin: 0 auto 1rem;
-  animation: emergencyIconPulse 1.2s ease-in-out infinite;
-}
-
-@keyframes emergencyIconPulse {
-  0%, 100% { transform: scale(1); background: rgba(255, 23, 68, 0.15); }
-  50%      { transform: scale(1.1); background: rgba(255, 23, 68, 0.3); }
-}
-
-.emergency-modal-title {
-  font-size: 1.25rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #ff1744;
-  margin: 0 0 1rem;
-}
-
-.emergency-modal-count {
-  font-size: 4rem;
-  font-weight: 900;
-  color: #fff;
-  line-height: 1;
-  margin-bottom: 0.25rem;
-  text-shadow: 0 0 20px rgba(255, 23, 68, 0.5);
-}
-
-.emergency-modal-label {
-  font-size: 1rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #ff8a80;
-  margin: 0 0 0.75rem;
-}
-
-.emergency-modal-desc {
-  font-size: 0.875rem;
-  color: #ccc;
-  line-height: 1.5;
-  margin: 0 0 1.75rem;
-}
-
-.emergency-modal-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 0.625rem;
-  align-items: center;
-}
-
-.emergency-modal-btn-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  padding: 0.875rem 1.5rem;
-  border: none;
-  border-radius: 8px;
-  font-size: 1rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: #fff;
-  background: #d50000;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s ease, transform 0.1s ease;
-  animation: emergencyBtnPulse 2s ease-in-out infinite;
-}
-
-.emergency-modal-btn-primary:hover {
-  background: #ff1744;
-  transform: scale(1.02);
-}
-
-@keyframes emergencyBtnPulse {
-  0%, 100% { background: #d50000; }
-  50%      { background: #b71c1c; }
-}
-
-.emergency-modal-btn-dismiss {
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.5);
-  padding: 0.5rem 1.5rem;
-  border-radius: 6px;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.15s ease;
-}
-
-.emergency-modal-btn-dismiss:hover {
-  color: rgba(255, 255, 255, 0.8);
-  border-color: rgba(255, 255, 255, 0.4);
 }
 
 /* ─── Tables ─── */
@@ -932,21 +846,37 @@ tr:hover td {
 }
 
 /* Config field styling */
-.config-field {
-  padding: 1rem 0;
+.config-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.config-row {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 0;
   border-bottom: 1px solid var(--border);
 }
 
-.config-field:last-child {
+.config-row:last-child {
   border-bottom: none;
 }
 
-.config-field label {
+.config-row label {
   font-weight: 600;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--text-main);
-  margin-bottom: 0.5rem;
-  text-transform: capitalize;
+  margin-bottom: 0;
+}
+
+.config-row .input,
+.config-row .textarea {
+  margin-top: 0;
 }
 
 /* Hub URL highlight card */

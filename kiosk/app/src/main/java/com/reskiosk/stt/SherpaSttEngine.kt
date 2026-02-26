@@ -31,7 +31,7 @@ class SherpaSttEngine private constructor(
          * Build the correct STT engine for the given language.
          * - English → English-primary streaming Zipformer
          * - Japanese → Japanese-specific streaming Zipformer
-         * - Filipino/Spanish/Korean → Whisper medium int8 (OfflineRecognizer)
+         * - Spanish/German/French → Whisper medium int8 (OfflineRecognizer)
          */
         fun forLanguage(context: Context, langCode: String): SherpaSttEngine {
             val modelsBase = File(context.filesDir, ModelConstants.MODELS_BASE_DIR)
@@ -177,7 +177,7 @@ class SherpaSttEngine private constructor(
 
                 val config = OfflineRecognizerConfig(
                     modelConfig = modelConfig,
-                    decodingMethod = "modified_beam_search",
+                    decodingMethod = "greedy_search",  // only option supported by sherpa-onnx Whisper
                 )
                 val recognizer = OfflineRecognizer(assetManager = null, config = config)
                 Log.i(TAG, "Whisper ($langCode) loaded from $modelsDir")
@@ -189,9 +189,9 @@ class SherpaSttEngine private constructor(
         }
 
         private fun whisperLangCode(appLangCode: String): String = when (appLangCode) {
-            "tl" -> "tl"      // Tagalog/Filipino
             "es" -> "es"      // Spanish
-            "ko" -> "ko"      // Korean
+            "de" -> "de"      // German
+            "fr" -> "fr"      // French
             else -> "en"
         }
     }
@@ -350,10 +350,10 @@ class SherpaSttEngine private constructor(
             }
             ModelType.WHISPER -> {
                 val stream = activeStream as? com.k2fsa.sherpa.onnx.OfflineStream ?: return ""
-                val rec = offlineRecognizer ?: return ""
                 stream.acceptWaveform(chunk, sampleRate = 16000)
-                rec.decode(stream)
-                rec.getResult(stream).text.trim()
+                // Whisper is batch-only — decode happens once in finishStream(), not per-chunk.
+                // Decoding here would block the audio read loop for seconds and cause buffer overflow.
+                ""
             }
         }
     }

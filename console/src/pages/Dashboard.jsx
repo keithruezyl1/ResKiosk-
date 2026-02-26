@@ -29,7 +29,7 @@ function Dashboard({ setEmergencyMode }) {
                 hub_id: netRes.data.hub_id || ''
             });
 
-            const em = config.emergency_mode === true;
+            const em = config.emergency_mode === 'active';
             setIsEmergency(em);
             setEmergencyMode(em);
 
@@ -43,7 +43,8 @@ function Dashboard({ setEmergencyMode }) {
     const toggleEmergency = async () => {
         try {
             const newValue = !isEmergency;
-            await hubClient.put('/admin/config/emergency_mode', { value: newValue });
+            const status = newValue ? 'active' : 'inactive';
+            await hubClient.put('/admin/evac', { emergency_mode: status });
             setIsEmergency(newValue);
             setEmergencyMode(newValue);
         } catch (e) {

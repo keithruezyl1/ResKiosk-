@@ -16,7 +16,11 @@ data class HubQueryResponse(
     @SerializedName("answer_text_en") val answerTextEn: String?,
     @SerializedName("answer_text_localized") val answerTextLocalized: String?,
     @SerializedName("answer_type") val answerType: String?,
-    @SerializedName("clarification_categories") val clarificationCategories: List<String>?
+    @SerializedName("clarification_categories") val clarificationCategories: List<String>?,
+    @SerializedName("source_id") val sourceId: Int?,
+    @SerializedName("query_log_id") val queryLogId: Int?,
+    @SerializedName("rlhf_top_source_id") val rlhfTopSourceId: Int?,
+    @SerializedName("rlhf_top_score") val rlhfTopScore: Float?
 )
 
 data class PingResponse(
@@ -29,6 +33,9 @@ data class PingResponse(
 interface HubApiService {
     @POST("query")
     suspend fun query(@Body payload: Map<String, @JvmSuppressWildcards Any?>): HubQueryResponse
+
+    @POST("feedback")
+    suspend fun feedback(@Body payload: Map<String, @JvmSuppressWildcards Any?>): Any
 
     @GET("admin/ping")
     suspend fun ping(): PingResponse

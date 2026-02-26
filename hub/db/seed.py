@@ -1,60 +1,69 @@
-import json
-from datetime import datetime
+import time
 from sqlalchemy.orm import Session
-from hub.db.schema import KBMeta, KBArticle, StructuredConfig
+from hub.db.schema import SystemVersion, EvacInfo, KBArticle, Category, Hub
 
-DEFAULT_CONFIGS = {
-    "food_schedule": {"morning": "08:00", "lunch": "12:00", "dinner": "18:00"},
-    "sleeping_zones": ["Zone A", "Zone B"],
-    "medical_location": "Room 101",
-    "registration_steps": ["Step 1: Go to desk", "Step 2: Show ID"],
-    "announcements": [],
-    "emergency_mode": False
-}
 
 def seed_data(db: Session):
-    # 1. Ensure KBMeta exists
-    meta = db.query(KBMeta).filter(KBMeta.id == 1).first()
-    if not meta:
-        meta = KBMeta(id=1, kb_version=1)
-        db.add(meta)
-        print("Seeded KBMeta.")
-    
-    # 2. Ensure Default Configs exist
-    for key, val in DEFAULT_CONFIGS.items():
-        config = db.query(StructuredConfig).filter(StructuredConfig.key == key).first()
-        if not config:
-            config = StructuredConfig(key=key)
-            config.set_value(val)
-            db.add(config)
-            print(f"Seeded config: {key}")
-            
-    # 3. Seed KB Articles (Phase 1 Stub - Real seeding uses dataset later)
-    # We will just add a sample placeholder if empty, or leave empty until Phase 3/Dataset integration.
-    # The prompt asked for "Seed logic" and "Seed script inserts initial KB articles idempotently".
-    # Since we can't load the dataset yet (no internet/dataset not present?), we will seed a few samples.
-    # Wait, Phase 3 is Admin Console. Phase 1 goal includes "Seed logic".
-    # Implementation Plan 3.2 says: `load_dataset("lextale/FirstAidInstructionsDataset")`.
-    # But AI_rules says "No runtime downloads". 
-    # If the dataset is not local, we cannot seed it dynamically from HuggingFace at runtime.
-    # We must have it or mock it.
-    # Checking prompt: "Seed script inserts initial KB articles idempotently" + "First Aid Dataset Seeding... ds = load_dataset...".
-    # BUT "No runtime model downloads" usually implies no large files.
-    # `datasets` library usually downloads.
-    # We will implement a mock seed for now to satisfy the structure, as we don't have the dataset file.
-    # OR we can assume we might have a local json to seed from.
-    # Let's seed a Welcome article.
-    
-    if db.query(KBArticle).count() == 0:
-        article = KBArticle(
-            title="Welcome",
-            body="Welcome to the Evacuation Center. Please register at the desk.",
-            category="general",
-            status="published",
-            enabled=True
+    # 1. Ensure SystemVersion exists (replaces KBMeta)
+    sv = db.query(SystemVersion).filter(SystemVersion.id == 1).first()
+    if not sv:
+        sv = SystemVersion(id=1, kb_version=1, last_published=int(time.time()))
+        db.add(sv)
+        print("Seeded SystemVersion.")
+
+    # 2. Seed default message categories
+    if db.query(Category).count() == 0:
+        defaults = [
+            ("Resource Request", "Request supplies, equipment, or personnel from another hub"),
+            ("Medical Alert", "Medical emergency or health-related communication"),
+            ("Status Update", "General status report from a hub"),
+            ("Evacuation Notice", "Evacuation orders or relocation instructions"),
+            ("General Communication", "General inter-hub messages"),
+        ]
+        for name, desc in defaults:
+            db.add(Category(category_name=name, description=desc))
+        print("Seeded message categories.")
+
+    # 3. Ensure this hub exists in the hub table
+    if db.query(Hub).count() == 0:
+        db.add(Hub(hub_name="This Hub", location="Local", created_at=int(time.time())))
+        print("Seeded default hub entry.")
+
+    # 4. Ensure EvacInfo row exists (replaces StructuredConfig defaults)
+    evac = db.query(EvacInfo).filter(EvacInfo.id == 1).first()
+    if not evac:
+        evac = EvacInfo(
+            id=1,
+            food_schedule="Morning: 08:00, Lunch: 12:00, Dinner: 18:00",
+            sleeping_zones="Zone A, Zone B",
+            medical_station="Room 101",
+            registration_steps="Step 1: Go to desk. Step 2: Show ID.",
+            announcements="",
+            emergency_mode="false",
+            last_updated="",
+            info_metadata="{}",
         )
-        article.set_tags(["welcome", "start"])
+        db.add(evac)
+        print("Seeded EvacInfo.")
+
+    # 3. Seed a welcome KB article if the table is empty
+    if db.query(KBArticle).count() == 0:
+        now = int(time.time())
+        article = KBArticle(
+            question="Welcome",
+            answer="Welcome to the Evacuation Center. Please register at the front desk.",
+            category="general",
+            tags="welcome,start",
+            enabled=1,
+            source="seed",
+            created_at=now,
+            last_updated=now,
+        )
         db.add(article)
-        print("Seeded sample article.")
-    
+        print("Seeded welcome article.")
+
     db.commit()
+
+    # Sync evac_info fields → KB articles for semantic search
+    from hub.db.evac_sync import sync_evac_to_kb
+    sync_evac_to_kb(db)

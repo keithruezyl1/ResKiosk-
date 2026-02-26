@@ -3,7 +3,7 @@ import time
 import os
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-MODEL_NAME = os.environ.get("RESKIOSK_LLM_MODEL", "llama3.2:3b")
+MODEL_NAME = os.environ.get("RESKIOSK_LLM_MODEL", "translategemma")
 TIMEOUT_SECONDS = 30  # First inference can be slow due to cold model load
 
 SYSTEM_PROMPT = """You are a helpful information assistant for an evacuation/shelter center.
@@ -66,11 +66,12 @@ def direct_answer(query: str) -> str:
 
 
 FORMAT_SYSTEM_PROMPT = """You are a response formatter for an evacuation center information system.
-You will be given a verified knowledge base entry as JSON. Your only job is to rewrite
-it as a short, clear, spoken response — 2 to 4 sentences maximum.
+You will be given a verified knowledge base entry as JSON containing 'question' and 'answer' fields.
+Your only job is to rewrite the 'answer' into a short, clear, spoken response — 2 to 4 sentences maximum.
+The 'question' field is for context only.
 
 Rules:
-- Do NOT add any information not present in the JSON below.
+- Do NOT add any information not present in the 'answer' field.
 - Do NOT speculate, infer, or expand beyond what is written.
 - Use simple, calm language appropriate for stressed evacuees.
 - Respond in plain conversational English only — no bullet points, no lists, no markdown.
@@ -86,12 +87,13 @@ def format_response(kb_article_json: str, query: str = "", history_str: str = ""
     if not kb_article_json:
         return ""
 
-    # Try to extract raw body as fallback
+    # Try to extract raw answer as fallback
     fallback_text = kb_article_json
     try:
         import json
         parsed = json.loads(kb_article_json)
-        fallback_text = parsed.get("body", kb_article_json)
+        # Use 'answer' (new schema) or 'body' (legacy fallback/api model)
+        fallback_text = parsed.get("answer", parsed.get("body", kb_article_json))
     except Exception:
         pass
 
@@ -109,7 +111,7 @@ def format_response(kb_article_json: str, query: str = "", history_str: str = ""
         ],
         "stream": False,
         "options": {
-            "temperature": 0.1,
+            "temperature": 0.3,
             "num_predict": 150,
             "top_p": 0.9
         }

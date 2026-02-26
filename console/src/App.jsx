@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Book, Settings, Wifi, Terminal, Phone, Moon, Sun, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Routes, Route, Link, useLocation } from 'react-router-dom';
+import { LayoutDashboard, Book, FileText, Settings, Wifi, Terminal, Phone, MessageSquare, Moon, Sun } from 'lucide-react';
 import hubClient from './api/hubClient';
 import logoSvg from './assets/reskiosk-logo.svg';
 
@@ -12,25 +12,13 @@ import ShelterConfig from './pages/ShelterConfig';
 import NetworkSetup from './pages/NetworkSetup';
 import LogsViewer from './pages/LogsViewer';
 import EmergencyCalls from './pages/EmergencyCalls';
+import HubMessages from './pages/HubMessages';
 
 function App() {
     const [emergencyMode, setEmergencyMode] = useState(false);
     const [activeAlertCount, setActiveAlertCount] = useState(0);
-    const [alertModalDismissed, setAlertModalDismissed] = useState(false);
-    const prevAlertCountRef = useRef(0);
     const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
     const location = useLocation();
-    const navigate = useNavigate();
-
-    // Re-show modal when alert count increases
-    useEffect(() => {
-        if (activeAlertCount > prevAlertCountRef.current) {
-            setAlertModalDismissed(false);
-        }
-        prevAlertCountRef.current = activeAlertCount;
-    }, [activeAlertCount]);
-
-    const showAlertModal = activeAlertCount > 0 && !alertModalDismissed;
 
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
@@ -61,7 +49,7 @@ function App() {
             try {
                 const res = await hubClient.get('/emergency/active');
                 setActiveAlertCount((res.data.alerts || []).length);
-            } catch (e) {}
+            } catch (e) { }
         };
         fetchAlerts();
         const interval = setInterval(fetchAlerts, 5000);
@@ -89,31 +77,11 @@ function App() {
                     ⚠ EMERGENCY MODE ACTIVE
                 </div>
             )}
-            {showAlertModal && (
-                <div className="emergency-modal-overlay" onClick={() => setAlertModalDismissed(true)}>
-                    <div className="emergency-modal" onClick={e => e.stopPropagation()}>
-                        <div className="emergency-modal-icon">
-                            <AlertTriangle size={48} />
-                        </div>
-                        <h2 className="emergency-modal-title">⚠ EMERGENCY ALERT</h2>
-                        <div className="emergency-modal-count">{activeAlertCount}</div>
-                        <p className="emergency-modal-label">Active Emergency Alert{activeAlertCount !== 1 ? 's' : ''}</p>
-                        <p className="emergency-modal-desc">Immediate attention required. Kiosk(s) have triggered an emergency distress signal.</p>
-                        <div className="emergency-modal-actions">
-                            <button
-                                className="emergency-modal-btn-primary"
-                                onClick={() => { setAlertModalDismissed(true); navigate('/emergency'); }}
-                            >
-                                VIEW ALERTS NOW
-                            </button>
-                            <button
-                                className="emergency-modal-btn-dismiss"
-                                onClick={() => setAlertModalDismissed(true)}
-                            >
-                                Dismiss
-                            </button>
-                        </div>
-                    </div>
+            {activeAlertCount > 0 && (
+                <div className="banner-emergency" style={{ backgroundColor: '#b71c1c' }}>
+                    <span className="pulse-dot" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: '#fff', marginRight: 8, animation: 'pulse 1s ease-in-out infinite' }}></span>
+                    <strong>{activeAlertCount}</strong> active emergency alert(s) —
+                    <Link to="/emergency" style={{ color: '#fff', textDecoration: 'underline', marginLeft: 6 }}>View now</Link>
                 </div>
             )}
 
@@ -134,6 +102,7 @@ function App() {
                         <NavItem to="/config" icon={Settings} label="Shelter Config" />
                         <NavItem to="/network" icon={Wifi} label="Network Setup" />
                         <NavItem to="/emergency" icon={Phone} label="Emergency Calls" />
+                        <NavItem to="/messages" icon={MessageSquare} label="Hub Messages" />
                         <NavItem to="/logs" icon={Terminal} label="Logs" highlight={false} />
                     </nav>
 
@@ -155,6 +124,7 @@ function App() {
                         <Route path="/config" element={<ShelterConfig />} />
                         <Route path="/network" element={<NetworkSetup />} />
                         <Route path="/emergency" element={<EmergencyCalls />} />
+                        <Route path="/messages" element={<HubMessages />} />
                         <Route path="/logs" element={<LogsViewer />} />
                     </Routes>
                 </main>

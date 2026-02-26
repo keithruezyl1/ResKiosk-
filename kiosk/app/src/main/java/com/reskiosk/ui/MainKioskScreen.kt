@@ -9,6 +9,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
@@ -45,18 +47,19 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.reskiosk.emergency.EmergencyStrings
 import com.reskiosk.viewmodel.KioskState
 import com.reskiosk.viewmodel.KioskViewModel
 import com.reskiosk.ModelConstants
-import com.reskiosk.emergency.EmergencyStrings
 import kotlinx.coroutines.launch
 import java.io.File
 
-// Page order: 0=Language, 1=Main (default), 2=Hub
+// Page order: 0=Language, 1=Main (default), 2=Hub, 3=Settings
 private const val PAGE_LANGUAGE = 0
 private const val PAGE_MAIN = 1
 private const val PAGE_HUB = 2
-private const val PAGE_COUNT = 3
+private const val PAGE_SETTINGS = 3
+private const val PAGE_COUNT = 4
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -184,6 +187,13 @@ fun MainKioskScreen(viewModel: KioskViewModel = viewModel()) {
                                         showMenu = false
                                     }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("Settings") },
+                                    onClick = { 
+                                        currentScreen = PAGE_SETTINGS 
+                                        showMenu = false
+                                    }
+                                )
                             }
                         }
                         Spacer(Modifier.width(8.dp))
@@ -224,6 +234,12 @@ fun MainKioskScreen(viewModel: KioskViewModel = viewModel()) {
             PAGE_HUB -> {
                 HubScreen(viewModel = viewModel, onBack = { currentScreen = PAGE_MAIN })
             }
+            PAGE_SETTINGS -> {
+                SettingsScreen(
+                    onBack = { currentScreen = PAGE_MAIN },
+                    onOpenSetup = { showSetup = true }
+                )
+            }
         }
     }
 }
@@ -243,7 +259,8 @@ fun MainPage(
     val chatHistory by viewModel.chatHistory.collectAsState()
     val sessionId by viewModel.sessionId.collectAsState()
     val selectedLang by viewModel.selectedLanguage.collectAsState()
-    val isListening = uiState is KioskState.Listening
+    val isListening = uiState is KioskState.Listening || uiState is KioskState.PreparingToListen
+    val isPreparingToListen = uiState is KioskState.PreparingToListen
     var showNoHubDialog by remember { mutableStateOf(false) }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
 
@@ -564,6 +581,46 @@ fun MainPage(
                                             )
                                         }
                                     }
+                                    // Add feedback buttons below assistant messages that are ratable
+                                    if (!msg.isUser && msg.sourceId != null && msg.feedbackGiven == null) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 4.dp, start = 4.dp),
+                                            horizontalArrangement = Arrangement.Start,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .border(1.dp, Color(0xFFE8610A), RoundedCornerShape(14.dp))
+                                                    .clickable { viewModel.sendFeedbackLike(msg.id) }
+                                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.ThumbUp,
+                                                    contentDescription = "Helpful",
+                                                    tint = Color(0xFFE8610A),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                            Spacer(Modifier.width(8.dp))
+                                            Box(
+                                                modifier = Modifier
+                                                    .border(1.dp, Color(0xFFE8610A), RoundedCornerShape(14.dp))
+                                                    .clickable { viewModel.sendFeedbackDislike(msg.id) }
+                                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.ThumbDown,
+                                                    contentDescription = "Not Helpful",
+                                                    tint = Color(0xFFE8610A),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                                 
                                 // Live Streaming STT Transcript
@@ -644,9 +701,9 @@ fun MainPage(
                     Box(
                         contentAlignment = Alignment.Center
                     ) {
-                        // Sonar animation — filled concentric circles behind button
+                        // Sonar animation — only when actually listening (not during preparing)
                         androidx.compose.animation.AnimatedVisibility(
-                            visible = isListening,
+                            visible = isListening && !isPreparingToListen,
                             enter = fadeIn(),
                             exit = fadeOut(animationSpec = tween(600))
                         ) {
@@ -667,12 +724,20 @@ fun MainPage(
                             elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),
                             contentPadding = PaddingValues(4.dp)
                         ) {
-                            Text(
-                                if (isListening) "Listening..." else "Tap to\nSpeak",
-                                style = MaterialTheme.typography.labelMedium,
-                                textAlign = TextAlign.Center,
-                                color = Color.White
-                            )
+                            if (isPreparingToListen) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(36.dp),
+                                    color = Color.White,
+                                    strokeWidth = 3.dp
+                                )
+                            } else {
+                                Text(
+                                    if (uiState is KioskState.Listening) EmergencyStrings.get("listening", selectedLang) else "Tap to\nSpeak",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    textAlign = TextAlign.Center,
+                                    color = Color.White
+                                )
+                            }
                         }
                     }
                 }
@@ -740,7 +805,8 @@ fun MainPage(
                     }
                 }
             }
-                    }
+
+            }
             }
         }
     }

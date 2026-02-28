@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.sqrt
 import java.io.File
 import java.util.Collections
 import java.util.UUID
@@ -47,6 +48,11 @@ sealed class KioskState {
     object EmergencyResolved : KioskState()
     data class EmergencyFailed(val retryCount: Int) : KioskState()
     object EmergencyCancelled : KioskState()
+}
+
+enum class ChatMode {
+    VOICE_ONLY,
+    TEXT_VOICE
 }
 
 // Data class for Chat Frame
@@ -109,6 +115,18 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
     
     private val _chatHistory = MutableStateFlow<List<ChatMessage>>(emptyList())
     val chatHistory = _chatHistory.asStateFlow()
+
+    private val _chatMode = MutableStateFlow(ChatMode.VOICE_ONLY)
+    val chatMode = _chatMode.asStateFlow()
+
+    private val _loadingTitle = MutableStateFlow("")
+    val loadingTitle = _loadingTitle.asStateFlow()
+
+    private val _loadingSubtitle = MutableStateFlow("")
+    val loadingSubtitle = _loadingSubtitle.asStateFlow()
+
+    private val _voiceLevels = MutableStateFlow(List(24) { 0f })
+    val voiceLevels = _voiceLevels.asStateFlow()
 
     private val _emergencyCooldownActive = MutableStateFlow(false)
     val emergencyCooldownActive = _emergencyCooldownActive.asStateFlow()
@@ -271,6 +289,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
     private var emergencyCancelJob: Job? = null
     private var emergencyCooldownJob: Job? = null
     private var emergencyCooldownUntil: Long = 0L
+    private var smoothedVoiceLevel: Float = 0f
 
     private val EMERGENCY_CONFIRM_SECONDS = 20
     private val EMERGENCY_CANCEL_SECONDS = 10
@@ -307,6 +326,43 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         android.util.Log.i("KioskViewModel", "Hub disconnected, heartbeat stopped")
     }
 
+    fun setChatMode(mode: ChatMode) {
+        _chatMode.value = mode
+    }
+
+    private fun beginLoadingOverlay() {
+        _loadingTitle.value = EmergencyStrings.getRandom("asking_hub_title", 5, _selectedLanguage.value)
+        _loadingSubtitle.value = EmergencyStrings.get("asking_hub_subtitle", _selectedLanguage.value)
+    }
+
+    private fun clearLoadingOverlay() {
+        _loadingTitle.value = ""
+        _loadingSubtitle.value = ""
+    }
+
+    private fun resetVoiceLevels() {
+        smoothedVoiceLevel = 0f
+        _voiceLevels.value = List(24) { 0f }
+    }
+
+    private fun updateVoiceLevels(chunk: FloatArray) {
+        if (chunk.isEmpty()) return
+        var sumSquares = 0.0
+        for (sample in chunk) {
+            sumSquares += (sample * sample).toDouble()
+        }
+        val rms = sqrt(sumSquares / chunk.size).toFloat()
+        val normalized = (rms * 8f).coerceIn(0f, 1f)
+        smoothedVoiceLevel = (smoothedVoiceLevel * 0.72f) + (normalized * 0.28f)
+
+        val current = _voiceLevels.value
+        if (current.isEmpty()) {
+            _voiceLevels.value = listOf(smoothedVoiceLevel)
+            return
+        }
+        _voiceLevels.value = current.drop(1) + smoothedVoiceLevel
+    }
+
     // --- Inactivity Timer ---
     private fun resetInactivityTimer() {
         if (_sessionId.value == null) return // No session, no timer
@@ -332,6 +388,9 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         _sessionId.value = UUID.randomUUID().toString()
         _chatHistory.value = emptyList()
         _uiState.value = KioskState.Idle
+        _chatMode.value = ChatMode.VOICE_ONLY
+        clearLoadingOverlay()
+        resetVoiceLevels()
         hasIntroducedReze = false
         hasSpokenSessionEnding = false
         emergencyAlertId = null
@@ -362,6 +421,9 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         _sessionId.value = null
         _chatHistory.value = emptyList()
         _uiState.value = KioskState.Idle
+        _chatMode.value = ChatMode.VOICE_ONLY
+        clearLoadingOverlay()
+        resetVoiceLevels()
         _transcript.value = ""
         hasIntroducedReze = false
         emergencyAlertId = null
@@ -428,6 +490,8 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         // Stop any previous TTS and clear pre-buffer so we don't record speaker output
         try { recorder.stopRecording() } catch (e: Exception) {}
         tts?.stop()
+        clearLoadingOverlay()
+        resetVoiceLevels()
         // New question about to start: hide any previous feedback button until we have a fresh answer
 
 
@@ -473,6 +537,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                         recordedSamples.addAll(chunk.toList())
                     }
                 }
+                updateVoiceLevels(chunk)
                 val partialRaw = stt?.feedAndDecodeStream(chunk)
                 if (!partialRaw.isNullOrBlank()) {
                     _transcript.value = partialRaw.toSentenceCase()
@@ -487,9 +552,12 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 startListeningJob?.cancel()
                 startListeningJob = null
                 _uiState.value = KioskState.Idle
+                resetVoiceLevels()
             }
             is KioskState.Listening -> {
                 recorder.stopRecording()
+                resetVoiceLevels()
+                beginLoadingOverlay()
                 _uiState.value = KioskState.Transcribing
                 resetInactivityTimer()
                 // Continuous listener stays running in background for next tap
@@ -506,12 +574,72 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         performQuery(qEn, qOrg, isRetry = true, category = category)
     }
 
+    fun submitTypedQuery(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank() || _sessionId.value == null) return
+        if (_uiState.value is KioskState.Transcribing || _uiState.value is KioskState.Processing) return
+        tts?.stop()
+        try { recorder.stopRecording() } catch (_: Exception) {}
+        clearLoadingOverlay()
+        resetVoiceLevels()
+
+        val emergencyResult = EmergencyDetector.detect(trimmed, trimmed)
+        if (emergencyResult.isEmergency) {
+            tts?.stop()
+            cancelInactivityTimer()
+            if (emergencyResult.tier == 1) {
+                startEmergencyCancelWindow(trimmed)
+            } else {
+                _uiState.value = KioskState.EmergencyConfirmation(trimmed, EMERGENCY_CONFIRM_SECONDS)
+                startEmergencyConfirmationCountdown(trimmed)
+                tts?.speak(EmergencyStrings.get("confirm_prompt", _selectedLanguage.value))
+            }
+            return
+        }
+
+        val queryType = inferTextQueryType(trimmed)
+        val newList = _chatHistory.value.toMutableList()
+        newList.add(ChatMessage(isUser = true, text = trimmed))
+        _chatHistory.value = newList
+        lastQueryEnglish = trimmed
+        lastQueryOriginal = trimmed
+        beginLoadingOverlay()
+        _uiState.value = KioskState.Processing
+        resetInactivityTimer()
+        performQuery(
+            queryEnglish = trimmed,
+            queryOriginal = trimmed,
+            isRetry = false,
+            category = null,
+            placeholderId = null,
+            queryType = queryType,
+            intonationConfidence = 0f,
+        )
+    }
+
+    private fun inferTextQueryType(text: String): String {
+        val trimmed = text.trim()
+        if (trimmed.endsWith("?")) return "question"
+        val lowered = trimmed.lowercase()
+        val firstToken = lowered.split(Regex("\\s+")).firstOrNull().orEmpty()
+        val questionStarts = setOf(
+            "what", "where", "when", "why", "how", "who", "which",
+            "can", "could", "is", "are", "do", "does", "did",
+            "will", "would", "should", "may", "que", "donde", "cuando", "como",
+            "wer", "wann", "wie", "warum", "quoi", "ou", "quand", "comment",
+            "nan", "doko", "itsu", "naze", "dou"
+        )
+        return if (firstToken in questionStarts) "question" else "statement"
+    }
+
     fun reset() {
         recorder.stopRecording()
         tts?.stop()
         try { stt?.finishStream() } catch (e: Exception) {}
         _transcript.value = ""
         _uiState.value = KioskState.Idle
+        clearLoadingOverlay()
+        resetVoiceLevels()
         performPendingRecorderRestartIfNeeded()
     }
 
@@ -555,6 +683,8 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         emergencyTranscript = transcript
         emergencyTier = tier
         cancelInactivityTimer()
+        clearLoadingOverlay()
+        resetVoiceLevels()
         emergencyConfirmJob?.cancel()
         emergencyCancelJob?.cancel()
         emergencyRetryJob?.cancel()
@@ -681,6 +811,8 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
         emergencyPollJob?.cancel()
         emergencyConfirmJob?.cancel()
         emergencyCancelJob?.cancel()
+        clearLoadingOverlay()
+        resetVoiceLevels()
         emergencyAlertId = null
         emergencyAlertLocalId = null
         prefs.edit().remove("emergency_alert_local_id").apply()
@@ -699,6 +831,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelEmergency() {
         emergencyConfirmJob?.cancel()
+        clearLoadingOverlay()
         _uiState.value = KioskState.Idle
         performPendingRecorderRestartIfNeeded()
         resetInactivityTimer()
@@ -706,6 +839,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancelFalseAlarm() {
         emergencyCancelJob?.cancel()
+        clearLoadingOverlay()
         _uiState.value = KioskState.EmergencyCancelled
         viewModelScope.launch {
             delay(1200L)
@@ -866,6 +1000,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 if (samples.size < (16000 * 0.3f).toInt()) {
                     withContext(Dispatchers.Main) {
                         removeListeningPlaceholderIfAny()
+                        clearLoadingOverlay()
                         handleError(EmergencyStrings.get("recording_too_short", lang))
                     }
                     stt?.finishStream()
@@ -876,6 +1011,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 if (isBatchLanguage(lang) && samples.size < 32000) {
                     withContext(Dispatchers.Main) {
                         removeListeningPlaceholderIfAny()
+                        clearLoadingOverlay()
                         handleError(EmergencyStrings.get("recording_too_short", lang))
                     }
                     stt?.finishStream()
@@ -888,6 +1024,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 if (transcriptRaw.isBlank()) {
                     withContext(Dispatchers.Main) {
                         removeListeningPlaceholderIfAny()
+                        clearLoadingOverlay()
                         handleError(EmergencyStrings.get("didnt_hear", lang))
                     }
                     return@launch
@@ -907,6 +1044,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 if (isSilenceOnly(transcriptProcessed)) {
                     withContext(Dispatchers.Main) {
                         removeListeningPlaceholderIfAny()
+                        clearLoadingOverlay()
                         handleError(EmergencyStrings.get("didnt_hear", lang))
                     }
                     return@launch
@@ -915,6 +1053,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 if (transcriptProcessed.isBlank()) {
                     withContext(Dispatchers.Main) {
                         removeListeningPlaceholderIfAny()
+                        clearLoadingOverlay()
                         handleError(EmergencyStrings.get("didnt_catch", lang))
                     }
                     return@launch
@@ -925,6 +1064,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 if (emergencyResult.isEmergency) {
                     withContext(Dispatchers.Main) {
                         tts?.stop()
+                        clearLoadingOverlay()
                         cancelInactivityTimer()
                         if (emergencyResult.tier == 1) {
                             startEmergencyCancelWindow(transcriptProcessed)
@@ -949,7 +1089,6 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.Main) {
                     _transcript.value = transcriptProcessed
                     _uiState.value = KioskState.Processing
-                    val placeholderId = "hub_" + System.currentTimeMillis()
                     val listeningId = currentListeningPlaceholderId
                     currentListeningPlaceholderId = null
                     val newList = _chatHistory.value.toMutableList()
@@ -960,14 +1099,13 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         newList.add(ChatMessage(isUser = true, text = transcriptProcessed))
                     }
-                    newList.add(ChatMessage(isUser = false, text = "Asking hub...", id = placeholderId))
                     _chatHistory.value = newList
                     lastQueryEnglish = transcriptProcessed
                     lastQueryOriginal = transcriptProcessed
                     performQuery(
-                    transcriptProcessed, transcriptProcessed,
-                    isRetry = false, category = null,
-                    placeholderId = placeholderId,
+                        transcriptProcessed, transcriptProcessed,
+                        isRetry = false, category = null,
+                        placeholderId = null,
                         queryType = if (intonation.isQuestion) "question" else "statement",
                         intonationConfidence = intonation.confidence
                     )
@@ -977,6 +1115,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e("KioskVM", "System Error", e)
                 withContext(Dispatchers.Main) {
                     removeListeningPlaceholderIfAny()
+                    clearLoadingOverlay()
                     handleError("System Error: ${e.message}")
                 }
             }
@@ -998,6 +1137,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 val hubUrl = prefs.getString("hub_url", "") ?: ""
                 if (hubUrl.isBlank()) {
                     withContext(Dispatchers.Main) {
+                        clearLoadingOverlay()
                         handleError("Hub not configured. Please connect to a Hub first.")
                     }
                     return@launch
@@ -1030,6 +1170,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("KioskVM", "Hub responded in ${queryMs}ms: type=${response.answerType}")
 
                 withContext(Dispatchers.Main) {
+                    clearLoadingOverlay()
                     if (response.answerType == "NEEDS_CLARIFICATION") {
                         if (placeholderId != null) {
                             _chatHistory.value = _chatHistory.value.filter { it.id != placeholderId }
@@ -1063,7 +1204,6 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         } else {
                             val newList = _chatHistory.value.toMutableList()
-                            newList.add(ChatMessage(isUser = true, text = queryOriginal))
                             newList.add(ChatMessage(
                                 isUser = false,
                                 text = finalAnswer,
@@ -1082,6 +1222,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 android.util.Log.e("KioskViewModel", "Query failed", e)
                 withContext(Dispatchers.Main) {
+                    clearLoadingOverlay()
                     if (placeholderId != null) {
                         _chatHistory.value = _chatHistory.value.filter { it.id != placeholderId }
                     }
@@ -1099,6 +1240,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun handleError(msg: String) {
+        clearLoadingOverlay()
         _uiState.value = KioskState.Error(msg)
         tts?.speak(msg)
 
@@ -1113,6 +1255,7 @@ class KioskViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun speakAndShow(text: String) {
+        clearLoadingOverlay()
         _uiState.value = KioskState.Speaking(text)
         tts?.speak(text)
         // Wait for TTS to actually finish playing, with a safety timeout

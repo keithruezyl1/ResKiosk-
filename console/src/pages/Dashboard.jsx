@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import hubClient from '../api/hubClient';
 import logoSvg from '../assets/reskiosk-logo.svg';
+import KBViewer from './KBViewer';
 
 function Dashboard({ setEmergencyMode }) {
     const [stats, setStats] = useState({ kb_version: 0, online: false, article_count: 0, device_id: '' });
@@ -113,6 +114,8 @@ function Dashboard({ setEmergencyMode }) {
                     </button>
                 </div>
             </div>
+
+            <KBViewer />
         </div>
     );
 }

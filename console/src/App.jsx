@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Book, FileText, Settings, Wifi, WifiOff, Terminal, Phone, MessageSquare, Moon, Sun, AlertTriangle, X } from 'lucide-react';
+import { LayoutDashboard, FileText, Settings, Wifi, WifiOff, Terminal, Phone, MessageSquare, Moon, Sun, AlertTriangle, X } from 'lucide-react';
 import hubClient from './api/hubClient';
 import logoSvg from './assets/reskiosk-logo.svg';
 
@@ -135,7 +135,6 @@ function App() {
 
                     <nav className="sidebar-nav">
                         <NavItem to="/" icon={LayoutDashboard} label="Dashboard" />
-                        <NavItem to="/kb" icon={Book} label="KB Viewer" />
 
                         <NavItem to="/config" icon={Settings} label="Shelter Config" />
                         <NavItem to="/network" icon={Wifi} label="Network Setup" />

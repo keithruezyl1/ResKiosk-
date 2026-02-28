@@ -1,5 +1,12 @@
 # ResKiosk Android Kiosk
 
+## Documentation
+
+- `docs/kiosk-ui.md` - Kiosk UI behavior (start screen, chat modes, loading overlay, SOS hold-to-confirm).
+- `docs/emergency-calls.md` - End-to-end emergency lifecycle across kiosk, hub, and console.
+- `docs/intent-classification.md` - Intent and retrieval classification behavior.
+- `docs/PIPELINE_END_TO_END.md` - Full speech-to-response pipeline.
+
 ## Hub connection
 
 The Hub is started from **TO RUN** (`start_hub.vbs`) on the laptop. In the app, set **Hub URL** (e.g. `http://<Hub-IP>:8000`) under **Hub Connection**; you can copy the URL from the Hub’s admin console at **http://localhost:8000** → Network Setup.

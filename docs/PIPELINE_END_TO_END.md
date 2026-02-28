@@ -1,5 +1,7 @@
 # ResKiosk Pipeline: User Speaks to User Hears Response
 
+For kiosk UI-specific behavior and screen states, see `docs/kiosk-ui.md`.
+
 This document describes the full end-to-end pipeline from the moment the user speaks until they hear the system’s response. All references point to the current codebase. To run the hub, use **TO RUN/start_hub.vbs** (see [GET_STARTED.md](../../GET_STARTED.md)).
 
 ---

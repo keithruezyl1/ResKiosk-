@@ -249,6 +249,101 @@ fun MainKioskScreen(viewModel: KioskViewModel = viewModel()) {
 //  Main interaction page
 // ──────────────────────────────────────────────────────────────────────────────
 @Composable
+private fun EmergencyStatePanel(
+    backgroundColor: Color,
+    panelColor: Color,
+    accentColor: Color,
+    titleColor: Color,
+    bodyColor: Color,
+    iconText: String,
+    title: String,
+    body: String,
+    titleFontSize: androidx.compose.ui.unit.TextUnit = 48.sp,
+    titleLineHeight: androidx.compose.ui.unit.TextUnit = 50.sp,
+    showDismiss: Boolean = false,
+    dismissText: String = "",
+    onDismiss: (() -> Unit)? = null,
+    lightTheme: Boolean = false
+) {
+    val pulse = rememberInfiniteTransition(label = "emergency_status_pulse")
+    val pulseScale by pulse.animateFloat(
+        initialValue = 0.95f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "emergency_status_scale"
+    )
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(backgroundColor),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .fillMaxWidth(0.86f)
+                .background(panelColor, RoundedCornerShape(26.dp))
+                .border(1.dp, accentColor.copy(alpha = if (lightTheme) 0.35f else 0.45f), RoundedCornerShape(26.dp))
+                .padding(horizontal = 28.dp, vertical = 34.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(76.dp)
+                    .scale(pulseScale)
+                    .background(accentColor, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = iconText,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+            Spacer(Modifier.height(22.dp))
+            Text(
+                text = title,
+                color = titleColor,
+                fontSize = titleFontSize,
+                fontWeight = FontWeight.ExtraBold,
+                lineHeight = titleLineHeight,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = body,
+                color = bodyColor,
+                fontSize = 24.sp,
+                lineHeight = 32.sp,
+                textAlign = TextAlign.Center
+            )
+            if (showDismiss && onDismiss != null) {
+                Spacer(Modifier.height(30.dp))
+                OutlinedButton(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (lightTheme) Color.White.copy(alpha = 0.9f) else Color.White.copy(alpha = 0.12f)
+                    ),
+                    border = BorderStroke(1.dp, if (lightTheme) accentColor.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                ) {
+                    Text(
+                        text = dismissText,
+                        color = if (lightTheme) Color(0xFF4E342E) else Color.White,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun MainPage(
     viewModel: KioskViewModel,
     showEndSessionDialog: Boolean,
@@ -426,189 +521,61 @@ fun MainPage(
                     }
                 }
                 is KioskState.EmergencyActive -> {
-                    val infiniteTransition = rememberInfiniteTransition(label = "sosPulse")
-                    val alpha by infiniteTransition.animateFloat(
-                        initialValue = 1f,
-                        targetValue = 0.3f,
-                        animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse),
-                        label = "alpha"
+                    EmergencyStatePanel(
+                        backgroundColor = Color(0xFFB71C1C),
+                        panelColor = Color(0xFF8A1212),
+                        accentColor = Color(0xFFE65050),
+                        titleColor = Color.White,
+                        bodyColor = Color.White.copy(alpha = 0.92f),
+                        iconText = "SOS",
+                        title = EmergencyStrings.get("active_title", selectedLang),
+                        body = EmergencyStrings.get("active_body", selectedLang),
+                        showDismiss = true,
+                        dismissText = EmergencyStrings.get("dismiss", selectedLang),
+                        onDismiss = { viewModel.dismissEmergency() }
                     )
-                    Box(
-                        modifier = Modifier.fillMaxSize().background(Color(0xFFB71C1C)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(48.dp)
-                        ) {
-                            Icon(
-                                painter = painterResource(com.reskiosk.R.drawable.ic_sos_large),
-                                contentDescription = null,
-                                tint = Color.White.copy(alpha = alpha),
-                                modifier = Modifier.size(80.dp)
-                            )
-                            Spacer(Modifier.height(24.dp))
-                            Text(
-                                EmergencyStrings.get("active_title", selectedLang),
-                                color = Color.White,
-                                fontSize = 30.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(Modifier.height(16.dp))
-                            Text(
-                                EmergencyStrings.get("active_body", selectedLang),
-                                color = Color.White.copy(alpha = 0.9f),
-                                fontSize = 18.sp,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(Modifier.height(48.dp))
-                            TextButton(onClick = { viewModel.dismissEmergency() }) {
-                                Text(
-                                    EmergencyStrings.get("dismiss", selectedLang),
-                                    color = Color.White.copy(alpha = 0.6f),
-                                    fontSize = 14.sp
-                                )
-                            }
-                        }
-                    }
                 }
                 is KioskState.EmergencyAcknowledged -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize().background(Color(0xFFD84315)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(48.dp)
-                        ) {
-                            Text(
-                                EmergencyStrings.get("acknowledged_title", selectedLang),
-                                color = Color.White,
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(Modifier.height(12.dp))
-                            Text(
-                                EmergencyStrings.get("acknowledged_body", selectedLang),
-                                color = Color.White.copy(alpha = 0.9f),
-                                fontSize = 16.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
+                    EmergencyStatePanel(
+                        backgroundColor = Color(0xFFD84315),
+                        panelColor = Color(0xFFB53A12),
+                        accentColor = Color(0xFFFFB15C),
+                        titleColor = Color.White,
+                        bodyColor = Color.White.copy(alpha = 0.92f),
+                        iconText = "ACK",
+                        title = EmergencyStrings.get("acknowledged_title", selectedLang),
+                        body = EmergencyStrings.get("acknowledged_body", selectedLang),
+                        titleFontSize = 40.sp,
+                        titleLineHeight = 42.sp
+                    )
                 }
                 is KioskState.EmergencyResponding -> {
-                    val pulse = rememberInfiniteTransition(label = "responding_pulse")
-                    val pulseScale by pulse.animateFloat(
-                        initialValue = 0.92f,
-                        targetValue = 1.08f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1200, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Reverse
-                        ),
-                        label = "responding_pulse_scale"
+                    EmergencyStatePanel(
+                        backgroundColor = Color(0xFFFFE8C4),
+                        panelColor = Color(0xFFF5E6D1),
+                        accentColor = Color(0xFFD97B2E),
+                        titleColor = Color(0xFF4E342E),
+                        bodyColor = Color(0xFF5D4037),
+                        iconText = "GO",
+                        title = EmergencyStrings.get("help_on_the_way", selectedLang),
+                        body = EmergencyStrings.get("responding_body", selectedLang),
+                        showDismiss = true,
+                        dismissText = EmergencyStrings.get("dismiss", selectedLang),
+                        onDismiss = { viewModel.dismissEmergency() },
+                        lightTheme = true
                     )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color(0xFFFFE8C4)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 28.dp, vertical = 48.dp)
-                                .background(
-                                    color = Color.White.copy(alpha = 0.42f),
-                                    shape = RoundedCornerShape(26.dp)
-                                )
-                                .border(
-                                    width = 1.dp,
-                                    color = Color(0xFFD7B085),
-                                    shape = RoundedCornerShape(26.dp)
-                                )
-                                .padding(horizontal = 28.dp, vertical = 36.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(74.dp)
-                                    .scale(pulseScale)
-                                    .background(Color(0xFFD97B2E), CircleShape)
-                                    .border(2.dp, Color.White.copy(alpha = 0.85f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "!",
-                                    color = Color.White,
-                                    fontSize = 34.sp,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-                            Spacer(Modifier.height(22.dp))
-                            Text(
-                                EmergencyStrings.get("help_on_the_way", selectedLang),
-                                color = Color(0xFF4E342E),
-                                fontSize = 40.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(Modifier.height(14.dp))
-                            Text(
-                                EmergencyStrings.get("responding_body", selectedLang),
-                                color = Color(0xFF5D4037),
-                                fontSize = 22.sp,
-                                lineHeight = 30.sp,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(Modifier.height(28.dp))
-                            OutlinedButton(
-                                onClick = { viewModel.dismissEmergency() },
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    containerColor = Color.White.copy(alpha = 0.9f)
-                                ),
-                                border = BorderStroke(1.dp, Color(0xFFD7B085)),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(64.dp)
-                            ) {
-                                Text(
-                                    EmergencyStrings.get("dismiss", selectedLang),
-                                    color = Color(0xFF5D4037),
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
                 }
                 is KioskState.EmergencyResolved -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize().background(Color(0xFF2E7D32)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(48.dp)
-                        ) {
-                            Text(
-                                EmergencyStrings.get("resolved_title", selectedLang),
-                                color = Color.White,
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(Modifier.height(12.dp))
-                            Text(
-                                EmergencyStrings.get("resolved_body", selectedLang),
-                                color = Color.White.copy(alpha = 0.95f),
-                                fontSize = 16.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
+                    EmergencyStatePanel(
+                        backgroundColor = Color(0xFF2E7D32),
+                        panelColor = Color(0xFF256A2A),
+                        accentColor = Color(0xFF5EC66B),
+                        titleColor = Color.White,
+                        bodyColor = Color.White.copy(alpha = 0.95f),
+                        iconText = "OTW",
+                        title = EmergencyStrings.get("resolved_title", selectedLang),
+                        body = EmergencyStrings.get("resolved_body", selectedLang)
+                    )
                 }
                 is KioskState.EmergencyFailed -> {
                     Box(

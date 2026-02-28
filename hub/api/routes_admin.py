@@ -1,28 +1,27 @@
-from datetime import datetime
+import time
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from hub.db.session import get_db
 from hub.db import schema
 from hub.models import api_models
 from hub.retrieval.embedder import load_embedder, serialize_embedding, get_embeddable_text
-from hub.retrieval.search import invalidate_corpus_cache, invalidate_shelter_config_cache
+from hub.retrieval.search import invalidate_corpus_cache
 
 router = APIRouter()
 
 
-def increment_kb_version(db: Session):
-    meta = db.query(schema.KBMeta).first()
-    if meta:
-        meta.kb_version += 1
-        meta.updated_at = datetime.utcnow()
-        db.add(meta)
+def _increment_kb_version(db: Session):
+    """Bump the kb_version in system_version and record last_published."""
+    sv = db.query(schema.SystemVersion).first()
+    if sv:
+        sv.kb_version = (sv.kb_version or 0) + 1
+        sv.last_published = int(time.time())
+        db.add(sv)
         db.commit()
 
 
 def _embed_article(db: Session, article: schema.KBArticle):
-    """Generate and store embedding for an article. Called immediately on create/update.
-    Uses the canonical get_embeddable_text() (title + tags, not body).
-    """
+    """Generate and store embedding for an article."""
     try:
         embedder = load_embedder()
         text = get_embeddable_text(article)
@@ -36,30 +35,31 @@ def _embed_article(db: Session, article: schema.KBArticle):
         print(f"[Embedder] WARNING: Failed to embed article {article.id}: {e}")
 
 
-# Articles
+# ─── KB Articles ────────────────────────────────────────────────────────────
+
 @router.post("/admin/article", response_model=api_models.ArticleResponse, status_code=status.HTTP_201_CREATED)
 async def create_article(
     article: api_models.ArticleCreate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     db_article = schema.KBArticle(
-        title=article.title,
-        body=article.body,
+        question=article.question,
+        answer=article.answer,
         category=article.category,
-        status=article.status,
-        enabled=article.enabled
+        tags=",".join(article.tags) if article.tags else "",
+        enabled=1 if article.enabled else 0,
+        status=article.status or "draft",
+        source="manual",
+        created_at=int(time.time()),
+        last_updated=int(time.time()),
     )
-    db_article.set_tags(article.tags)
-
     db.add(db_article)
-    increment_kb_version(db)
+    _increment_kb_version(db)
     db.commit()
     db.refresh(db_article)
 
-    # Auto-embed in background so the API responds immediately
     background_tasks.add_task(_embed_article, db, db_article)
-
     return db_article
 
 
@@ -68,33 +68,35 @@ async def update_article(
     id: int,
     update: api_models.ArticleUpdate,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     db_article = db.query(schema.KBArticle).filter(schema.KBArticle.id == id).first()
     if not db_article:
         raise HTTPException(status_code=404, detail="Article not found")
+    if db_article.source == "evac_sync":
+        raise HTTPException(status_code=403, detail="This article is managed by Shelter Config and cannot be edited here.")
 
     content_changed = False
-    if update.title is not None:
-        db_article.title = update.title
+    if update.question is not None:
+        db_article.question = update.question
         content_changed = True
-    if update.body is not None:
-        db_article.body = update.body
+    if update.answer is not None:
+        db_article.answer = update.answer
         content_changed = True
     if update.category is not None:
         db_article.category = update.category
     if update.tags is not None:
-        db_article.set_tags(update.tags)
+        db_article.tags = ",".join(update.tags)
+    if update.enabled is not None:
+        db_article.enabled = 1 if update.enabled else 0
     if update.status is not None:
         db_article.status = update.status
-    if update.enabled is not None:
-        db_article.enabled = update.enabled
 
-    increment_kb_version(db)
+    db_article.last_updated = int(time.time())
+    _increment_kb_version(db)
     db.commit()
     db.refresh(db_article)
 
-    # Only re-embed if text changed
     if content_changed:
         background_tasks.add_task(_embed_article, db, db_article)
 
@@ -106,40 +108,66 @@ async def delete_article(id: int, db: Session = Depends(get_db)):
     db_article = db.query(schema.KBArticle).filter(schema.KBArticle.id == id).first()
     if not db_article:
         raise HTTPException(status_code=404, detail="Article not found")
-
+    if db_article.source == "evac_sync":
+        raise HTTPException(status_code=403, detail="This article is managed by Shelter Config and cannot be deleted.")
     db.delete(db_article)
-    increment_kb_version(db)
+    _increment_kb_version(db)
     db.commit()
     invalidate_corpus_cache()
 
 
-# Config
-@router.put("/admin/config/{key}", response_model=api_models.ConfigResponse)
-async def update_config(key: str, update: api_models.ConfigUpdate, db: Session = Depends(get_db)):
-    db_config = db.query(schema.StructuredConfig).filter(schema.StructuredConfig.key == key).first()
+# ─── Evac Info (Shelter Operations Config) ──────────────────────────────────
 
-    if not db_config:
-        db_config = schema.StructuredConfig(key=key)
-        db.add(db_config)
+@router.get("/admin/evac", response_model=api_models.EvacInfoResponse)
+async def get_evac_info(db: Session = Depends(get_db)):
+    row = db.query(schema.EvacInfo).filter(schema.EvacInfo.id == 1).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Evac info not found")
+    return row
 
-    db_config.set_value(update.value)
-    increment_kb_version(db)
+
+@router.put("/admin/evac", response_model=api_models.EvacInfoResponse)
+async def update_evac_info(
+    update: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    row = db.query(schema.EvacInfo).filter(schema.EvacInfo.id == 1).first()
+    if not row:
+        row = schema.EvacInfo(id=1)
+        db.add(row)
+
+    allowed = ["food_schedule", "sleeping_zones", "medical_station",
+               "registration_steps", "announcements", "emergency_mode"]
+    for field in allowed:
+        if field in update:
+            setattr(row, field, update[field])
+    
+    # Map 'metadata' from request to 'info_metadata' column
+    if "metadata" in update:
+        row.info_metadata = update["metadata"]
+    import datetime
+    row.last_updated = datetime.datetime.utcnow().isoformat()
+
     db.commit()
-    db.refresh(db_config)
-    return db_config
+    db.refresh(row)
 
+    # Sync evac fields → KB articles for semantic search
+    from hub.db.evac_sync import sync_evac_to_kb
+    sync_evac_to_kb(db)
+
+    return row
+
+
+# ─── Publish (re-embed all) ──────────────────────────────────────────────────
 
 @router.post("/admin/publish")
 async def publish_kb(db: Session = Depends(get_db)):
-    """
-    Re-generates embeddings for ALL enabled articles and increments KB version.
-    Use this to bulk re-index after importing articles or changing the embedding model.
-    """
+    """Re-generate embeddings for all enabled articles and bump KB version."""
     print("[Publish] Regenerating all embeddings...")
     embedder = load_embedder()
 
-    articles = db.query(schema.KBArticle).filter(schema.KBArticle.enabled == True).all()
-
+    articles = db.query(schema.KBArticle).filter(schema.KBArticle.enabled == 1).all()
     count = 0
     errors = 0
     for art in articles:
@@ -148,27 +176,23 @@ async def publish_kb(db: Session = Depends(get_db)):
             vec = embedder.embed_text(text)
             art.embedding = serialize_embedding(vec)
             count += 1
-            print(f"[Publish] Embedded article {art.id}: '{text[:60]}'")
         except Exception as e:
             print(f"[Publish] Failed to embed article {art.id}: {e}")
             errors += 1
 
-    increment_kb_version(db)
+    _increment_kb_version(db)
     db.commit()
     invalidate_corpus_cache()
-    invalidate_shelter_config_cache()
 
     print(f"[Publish] Done. {count} embedded, {errors} errors.")
     return {"status": "published", "articles_processed": count, "errors": errors}
 
 
+# ─── Bulk Import ─────────────────────────────────────────────────────────────
+
 @router.post("/admin/import")
 async def import_articles(payload: dict, db: Session = Depends(get_db)):
-    """
-    Bulk import articles from JSON. Expects: { "articles": [ { title, body, category, tags, status, enabled }, ... ] }
-    Each article is validated, saved, and embedded immediately.
-    Returns a summary of imported / skipped / failed counts.
-    """
+    """Bulk import articles. Expects: { "articles": [{question, answer, category, tags, enabled}, ...] }"""
     articles_data = payload.get("articles", [])
     if not isinstance(articles_data, list) or len(articles_data) == 0:
         raise HTTPException(status_code=400, detail="Expected a non-empty 'articles' array.")
@@ -182,46 +206,48 @@ async def import_articles(payload: dict, db: Session = Depends(get_db)):
     imported = 0
     skipped = 0
     errors_list = []
+    now = int(time.time())
 
     for i, data in enumerate(articles_data):
         try:
-            title = (data.get("title") or "").strip()
-            body = (data.get("body") or "").strip()
-            if not title or not body:
+            question = (data.get("question") or "").strip()
+            answer = (data.get("answer") or "").strip()
+            if not question or not answer:
                 skipped += 1
-                errors_list.append(f"Item {i+1}: missing title or body — skipped")
+                errors_list.append(f"Item {i+1}: missing question or answer — skipped")
                 continue
 
             article = schema.KBArticle(
-                title=title,
-                body=body,
+                question=question,
+                answer=answer,
                 category=data.get("category", "General"),
-                status=data.get("status", "published"),
-                enabled=data.get("enabled", True),
+                tags=",".join(data.get("tags", [])) if isinstance(data.get("tags"), list) else (data.get("tags") or ""),
+                enabled=1 if data.get("enabled", True) else 0,
+                status=data.get("status") or "draft",
+                source=data.get("source", "import"),
+                created_at=now,
+                last_updated=now,
             )
-            article.set_tags(data.get("tags", []))
 
-            # Generate embedding using canonical function
             if embedder:
                 try:
                     text = get_embeddable_text(article)
                     vec = embedder.embed_text(text)
                     article.embedding = serialize_embedding(vec)
                 except Exception as e:
-                    print(f"[Import] Warning: embedding failed for '{title[:50]}': {e}")
+                    print(f"[Import] Warning: embedding failed for '{question[:50]}': {e}")
 
             db.add(article)
             imported += 1
         except Exception as e:
-            errors_list.append(f"Item {i+1} ('{data.get('title', '?')}'): {e}")
+            errors_list.append(f"Item {i+1} ('{data.get('question', '?')}'): {e}")
 
     if imported > 0:
-        increment_kb_version(db)
+        _increment_kb_version(db)
         db.commit()
         invalidate_corpus_cache()
 
     print(f"[Import] Done. {imported} imported, {skipped} skipped, {len(errors_list)} errors.")
-
     return {
         "status": "ok",
         "imported": imported,

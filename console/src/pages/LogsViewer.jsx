@@ -49,12 +49,7 @@ const LogsViewer = () => {
         };
     }, []);
 
-    useEffect(() => {
-        // Auto-scroll to bottom
-        if (bottomRef.current) {
-            bottomRef.current.scrollIntoView({ behavior: 'smooth' });
-        }
-    }, [logs]);
+    // Intentionally no auto-scroll: keep user position stable while logs stream in.
 
     const getBaseUrl = () => {
         if (window.location.port === '5173') {

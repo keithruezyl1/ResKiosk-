@@ -11,7 +11,7 @@ function KBViewer() {
     // New-article modal state
     const [showNewModal, setShowNewModal] = useState(false);
     const [formData, setFormData] = useState({
-        title: '', body: '', category: 'General', tags: [], enabled: true, status: 'draft'
+        question: '', answer: '', category: 'General', tags: [], enabled: true, status: 'draft'
     });
     const [saving, setSaving] = useState(false);
 
@@ -52,7 +52,7 @@ function KBViewer() {
         if (filter === 'disabled' && a.enabled) return false;
         if (search) {
             const q = search.toLowerCase();
-            return a.title.toLowerCase().includes(q) || a.category.toLowerCase().includes(q);
+            return a.question.toLowerCase().includes(q) || a.category.toLowerCase().includes(q);
         }
         return true;
     });
@@ -60,7 +60,7 @@ function KBViewer() {
     // ─── New Article Modal ───────────────────────────────────────────────
 
     const resetNewForm = () => {
-        setFormData({ title: '', body: '', category: 'General', tags: [], enabled: true, status: 'draft' });
+        setFormData({ question: '', answer: '', category: 'General', tags: [], enabled: true, status: 'draft' });
         setSaving(false);
     };
 
@@ -143,9 +143,9 @@ function KBViewer() {
                     setUploadState('error');
                     return;
                 }
-                const invalid = arts.filter(a => !a.title || !a.body);
+                const invalid = arts.filter(a => !a.question || !a.answer);
                 if (invalid.length > 0) {
-                    setUploadError(`${invalid.length} article(s) are missing a title or body.`);
+                    setUploadError(`${invalid.length} article(s) are missing a question or answer.`);
                     setUploadState('error');
                     return;
                 }
@@ -250,23 +250,29 @@ function KBViewer() {
                     <tbody>
                         {filtered.map(a => (
                             <tr key={a.id}>
-                                <td style={{ fontWeight: 500 }}>{a.title}</td>
+                                <td style={{ fontWeight: 500 }}>{a.question}</td>
                                 <td className="text-muted">{a.category}</td>
                                 <td>
-                                    <span className={`badge ${a.enabled ? 'badge-success' : 'badge-warning'}`}>
-                                        {a.enabled ? 'ENABLED' : 'DISABLED'}
+                                    <span className={`badge ${a.status === 'published' ? 'badge-success' : 'badge-warning'}`}>
+                                        {(a.status || 'draft').toUpperCase()}
                                     </span>
                                 </td>
-                                <td className="text-muted text-sm">{new Date(a.updated_at).toLocaleDateString()}</td>
+                                <td className="text-muted text-sm">{a.last_updated ? new Date(a.last_updated * 1000).toLocaleString() : '—'}</td>
                                 <td>
-                                    <div className="flex gap-1">
-                                        <Link to={`/faq/${a.id}/edit`} className="btn btn-icon" title="Edit">
-                                            <Edit size={15} style={{ color: 'var(--primary)' }} />
-                                        </Link>
-                                        <button onClick={() => handleDelete(a.id)} className="btn btn-icon" title="Delete">
-                                            <Trash2 size={15} style={{ color: 'var(--danger)' }} />
-                                        </button>
-                                    </div>
+                                    {a.source === 'evac_sync' ? (
+                                        <span className="badge badge-info" style={{ fontSize: '0.65rem', opacity: 0.7 }} title="Managed via Shelter Config">
+                                            Shelter Config
+                                        </span>
+                                    ) : (
+                                        <div className="flex gap-1">
+                                            <Link to={`/faq/${a.id}/edit`} className="btn btn-icon" title="Edit">
+                                                <Edit size={15} style={{ color: 'var(--primary)' }} />
+                                            </Link>
+                                            <button onClick={() => handleDelete(a.id)} className="btn btn-icon" title="Delete">
+                                                <Trash2 size={15} style={{ color: 'var(--danger)' }} />
+                                            </button>
+                                        </div>
+                                    )}
                                 </td>
                             </tr>
                         ))}
@@ -297,8 +303,8 @@ function KBViewer() {
                                         required
                                         className="input"
                                         placeholder="e.g. Where can I get food?"
-                                        value={formData.title}
-                                        onChange={e => setFormData({ ...formData, title: e.target.value })}
+                                        value={formData.question}
+                                        onChange={e => setFormData({ ...formData, question: e.target.value })}
                                     />
                                 </div>
 
@@ -308,8 +314,8 @@ function KBViewer() {
                                         required
                                         className="textarea"
                                         placeholder="Provide a clear, helpful answer..."
-                                        value={formData.body}
-                                        onChange={e => setFormData({ ...formData, body: e.target.value })}
+                                        value={formData.answer}
+                                        onChange={e => setFormData({ ...formData, answer: e.target.value })}
                                     />
                                 </div>
 
@@ -334,7 +340,19 @@ function KBViewer() {
                                     </div>
                                 </div>
 
-                                <div className="checkbox-row" style={{ marginBottom: '1.5rem' }}>
+                            <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
+                                <div>
+                                    <label>Status</label>
+                                    <select
+                                        className="input"
+                                        value={formData.status}
+                                        onChange={e => setFormData({ ...formData, status: e.target.value })}
+                                    >
+                                        <option value="draft">Draft</option>
+                                        <option value="published">Published</option>
+                                    </select>
+                                </div>
+                                <div className="checkbox-row" style={{ marginBottom: 0, alignItems: 'center' }}>
                                     <input
                                         type="checkbox"
                                         checked={formData.enabled}
@@ -343,6 +361,7 @@ function KBViewer() {
                                     />
                                     <label htmlFor="enabled">Enabled</label>
                                 </div>
+                            </div>
 
                                 <div className="flex justify-end gap-3" style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
                                     <button type="button" onClick={closeNewModal} className="btn">Cancel</button>
@@ -460,14 +479,14 @@ function KBViewer() {
                                     <div className="upload-format-hint">
                                         <p className="font-semibold text-sm" style={{ marginBottom: '0.25rem' }}>Expected format:</p>
                                         <pre className="format-preview">{`[
-  {
-    "title": "Where do I get food?",
-    "body": "Meals are served at...",
-    "category": "Food",
-    "tags": ["meals", "food"],
-    "status": "published",
-    "enabled": true
-  },
+    {
+      "question": "Where do I get food?",
+      "answer": "Meals are served at...",
+      "category": "Food",
+      "tags": ["meals", "food"],
+      "status": "published",
+      "enabled": true
+    },
   ...
 ]`}</pre>
                                     </div>
@@ -491,7 +510,7 @@ function KBViewer() {
                                             <div key={i} className="upload-preview-item">
                                                 <span className="upload-preview-num">{i + 1}</span>
                                                 <div>
-                                                    <div className="font-medium text-sm">{art.title}</div>
+                                                    <div className="font-medium text-sm">{art.question}</div>
                                                     <div className="text-xs text-muted">{art.category || 'General'} · {(art.tags || []).length} tags</div>
                                                 </div>
                                             </div>

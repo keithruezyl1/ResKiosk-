@@ -18,7 +18,16 @@ class MemoryStreamHandler(logging.Handler):
             self.logs.append(msg)
             
             # Print to the real stdout so it goes to hub.log
-            print(msg, file=sys.__stdout__, flush=True)
+            try:
+                print(msg, file=sys.__stdout__, flush=True)
+            except Exception:
+                # Fallback for Windows consoles with limited encodings (e.g. cp1252).
+                try:
+                    if hasattr(sys.__stdout__, "buffer"):
+                        sys.__stdout__.buffer.write((msg + "\n").encode("utf-8", "replace"))
+                        sys.__stdout__.buffer.flush()
+                except Exception:
+                    pass
 
             # Notify all connected websockets
             for queue in list(self.listeners):

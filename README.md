@@ -1,52 +1,49 @@
-# <span style="color:orange">ResKiosk</span>
+# ResKiosk Android Kiosk
 
-**<span style="color:orange">ResKiosk</span>** is a **voice-first AI operating layer** for disaster response environments.  
+## Hub connection
 
-It is designed to **manage information access, interaction, and updates** even under **extreme constraints** inside an evacuation center.
+The Hub is started from **TO RUN** (`start_hub.vbs`) on the laptop. In the app, set **Hub URL** (e.g. `http://<Hub-IP>:8000`) under **Hub Connection**; you can copy the URL from the Hub’s admin console at **http://localhost:8000** → Network Setup.
 
----
+## Dependencies
+This project requires the following dependencies in `app/build.gradle.kts`:
 
-## Key Features
+```kotlin
+dependencies {
+    // ... standard android deps ...
+    
+    // Sherpa ONNX (STT/TTS)
+    implementation("com.k2fsa.sherpa.onnx:sherpa-onnx:1.10.16") 
+    
+    // Google ML Kit (Translation)
+    implementation("com.google.mlkit:translate:17.0.2")
+    
+    // Jetpack Compose
+    implementation("androidx.activity:activity-compose:1.8.0")
+    implementation(platform("androidx.compose:compose-bom:2023.08.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.material3:material3")
+}
+```
 
-- **<span style="color:orange">Voice-first interface</span>**: Access and interact with data without typing.  
-- **<span style="color:orange">Offline-capable</span>**: Works when network connectivity is limited or unavailable.  
-- **<span style="color:orange">Real-time updates</span>**: Ensures critical information is always current.  
-- **<span style="color:orange">Information management</span>**: Organizes and delivers data efficiently during emergencies.
+## Assets (Manual Download Required)
+For offline STT/TTS, you must place model files in `app/src/main/assets/`.
 
----
+### STT Models (Sherpa)
+Download `sherpa-onnx-streaming-zipformer-en-2023-02-21.tar.bz2` (or similar small English model).
+Extract inside assets:
+- `tokens.txt`
+- `encoder-epoch-99-avg-1.onnx`
+- `decoder-epoch-99-avg-1.onnx`
+- `joiner-epoch-99-avg-1.onnx`
 
-## Mission Statement
+### TTS Models (Sherpa)
+Download `vits-piper-en_US-amy-low.tar.bz2`.
+Extract inside assets:
+- `en_US-amy-low.onnx`
+- `en_US-amy-low.onnx.json`
+- `tokens.txt`
 
-> Empower disaster response teams and affected communities with **instant, accessible, and reliable information**—even when technology and infrastructure are compromised.
-
----
-
-## Members
-- Genosolango, Selina Mae V.  
-- Saludsod, Ezekiel Gil T.  
-- Tagarao, Keith Ruezyl P.  
-- Quilo, Jan Isaac S.  
-- Vitorillo, Aldrin John A.  
-
----
-
-## Tech Stack
-- Python  
-- ReactTSX  
-- SQLite  
-- C++  
-- FastAPI  
-- Kotlin  
-- NLLB-200  
-- Llama 3.2:3b  
-- Sherpa-ONNX  
-- Whisper  
-- miniLM L6 V2  
-
----
-
-## Hardware Requirements (Per Node)
-- LoRa Module sx1278r02  
-- ESP32 Board  
-- Antenna  
-- USB-C to USB-C or USB-A to USB-A
+## Permissions
+Ensure `AndroidManifest.xml` has:
+- `<uses-permission android:name="android.permission.INTERNET" />` (For Hub comms)
+- `<uses-permission android:name="android.permission.RECORD_AUDIO" />`

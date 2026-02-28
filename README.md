@@ -38,7 +38,7 @@ It is designed to **manage information access, interaction, and updates** even u
 - FastAPI  
 - Kotlin  
 - NLLB-200  
-- TranslateGemma4b  
+- Llama 3.2:3b  
 - Sherpa-ONNX  
 - Whisper  
 - miniLM L6 V2  

@@ -22,7 +22,6 @@ async def get_network_info(db: Session = Depends(get_db)):
     # Hub name from Hub table
     hub_row = db.query(schema.Hub).first()
     hub_id = str(hub_row.hub_id) if hub_row else ""
-    device_id = hub_row.device_id if hub_row else ""
 
     connected_count = network_manager.get_connected_count()
     raw_list = network_manager.get_connected_kiosks()

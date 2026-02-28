@@ -20,21 +20,17 @@ object EmergencyDetector {
         "i am bleeding badly", "severe bleeding",
         "i need an ambulance", "call for help",
         "there is a fire",
-        "kailangan ko ng tulong ngayon", "hindi ako makahinga",
-        "may nagkolaps", "may nasusunog", "tulungan ninyo ako",
-        "matindi ang pagdurugo",
         "necesito ayuda ahora", "no puedo respirar",
         "hay un incendio", "alguien está inconsciente",
-        "tasukete kudasai", "kyuukyuu desu", "hi ga deta",
-        "dowa juseyo jigeum", "sum mot swo yo", "bul i nasseo"
+        "tasukete kudasai", "kyuukyuu desu", "hi ga deta"
     )
 
     private val tier2Keywords = setOf(
-        "fire", "sunog", "fuego", "kaji", "bul",
-        "dying", "namatay", "muero",
-        "unconscious", "kolaps", "inconsciente",
-        "emergency", "emergencia", "kyuukyuu", "bisang",
-        "ambulance", "ambulancia",
+        "fire", "fuego", "kaji",
+        "dying", "muero",
+        "unconscious", "inconsciente",
+        "emergency", "emergencia", "kyuukyuu",
+        "ambulance", "ambulancia"
     )
 
     fun detect(processedTranscript: String, rawTranscript: String): Result {

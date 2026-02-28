@@ -10,11 +10,11 @@ object ModelConstants {
     const val STT_DIR_EN = "sherpa-onnx-streaming-zipformer-en-2023-06-26"
     const val STT_URL_EN = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2"
 
-    // Japanese-specific streaming Zipformer
-    const val STT_DIR_JA = "sherpa-onnx-streaming-zipformer-ja-2024-08-01"
-    const val STT_URL_JA = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-ja-2024-08-01.tar.bz2"
+    // Japanese Zipformer (ReazonSpeech; same encoder/decoder/joiner layout as streaming)
+    const val STT_DIR_JA = "sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01"
+    const val STT_URL_JA = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01.tar.bz2"
 
-    // Whisper medium — multilingual (covers Filipino, Spanish, Korean)
+    // Whisper medium — multilingual (covers Spanish, German, French for batch STT)
     // Archive contains both full and int8 quantized models; we use int8 at runtime
     const val STT_DIR_WHISPER = "sherpa-onnx-whisper-medium"
     const val STT_URL_WHISPER = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-medium.tar.bz2"
@@ -23,20 +23,20 @@ object ModelConstants {
     const val STT_DIR_BILINGUAL = STT_DIR_EN
     const val STT_URL_BILINGUAL = STT_URL_EN
 
-    // ── TTS Models ──
+    // ── TTS Models (5 languages: en, ja, es, de, fr) ──
     const val TTS_DIR_EN = "vits-piper-en_US-lessac-medium"
     const val TTS_URL_EN = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2"
 
     const val TTS_DIR_ES = "vits-piper-es_ES-davefx-medium"
     const val TTS_URL_ES = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_ES-davefx-medium.tar.bz2"
 
+    const val TTS_DIR_DE = "vits-piper-de_DE-thorsten-medium"
+    const val TTS_URL_DE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-de_DE-thorsten-medium.tar.bz2"
+
+    const val TTS_DIR_FR = "vits-piper-fr_FR-siwis-medium"
+    const val TTS_URL_FR = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fr_FR-siwis-medium.tar.bz2"
+
     // No dedicated Japanese Piper TTS model exists upstream; JA TTS falls back to English.
-
-    // No Filipino/Tagalog Piper TTS model exists upstream; TL TTS falls back to English.
-
-
-    const val TTS_DIR_KO = "vits-piper-ko_KR-dawn_crowd-medium"
-    const val TTS_URL_KO = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-ko_KR-dawn_crowd-medium.tar.bz2"
 
     // ── Punctuation Models ──
     const val PUNCTUATION_DIR = "sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12"
@@ -47,11 +47,11 @@ object ModelConstants {
 
     /**
      * Returns the STT model directory name for the given language code.
-     * English → English Zipformer, Japanese → JA Zipformer, others → Whisper medium
+     * English → English Zipformer, Japanese → JA Zipformer, es/de/fr → Whisper medium
      */
     fun sttDirForLanguage(langCode: String): String = when (langCode) {
         "en" -> STT_DIR_EN
         "ja" -> STT_DIR_JA
-        else -> STT_DIR_WHISPER  // Whisper medium covers tl, es, ko
+        else -> STT_DIR_WHISPER  // Whisper covers es, de, fr
     }
 }

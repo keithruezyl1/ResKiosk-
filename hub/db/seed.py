@@ -86,3 +86,90 @@ def seed_data(db: Session):
     # Sync evac_info fields → KB articles for semantic search
     from hub.db.evac_sync import sync_evac_to_kb
     sync_evac_to_kb(db)
+
+    # Enrich tags for core KB articles with multilingual synonyms
+    _enrich_multilingual_tags(db)
+
+
+def _enrich_multilingual_tags(db: Session):
+    """Add multilingual tags to core KB articles to improve non-English recall."""
+    from hub.db.schema import KBArticle
+    from hub.retrieval.embedder import load_embedder, serialize_embedding, get_embeddable_text
+    from hub.retrieval.search import invalidate_corpus_cache
+    import time as _time
+
+    tag_map = {
+        "where can i wash my clothes?": [
+            "laundry", "wash", "clothes",
+            "lavanderia", "area de lavado", "lavar la ropa",
+            "waschraum", "wasche", "waschebereich",
+            "blanchisserie", "zone de lavage", "laver les vetements",
+            "洗濯", "洗濯場所", "洗濯エリア",
+        ],
+        "what is the food schedule?": [
+            "food", "meals", "schedule",
+            "food distribution", "food distribution schedule", "food distribution time",
+            "meal distribution", "meal distribution schedule",
+            "comida", "horario de comidas",
+            "essen", "essenszeit",
+            "repas", "horaire des repas",
+            "食事", "食事時間",
+        ],
+        "where are the sleeping zones?": [
+            "sleeping", "beds", "cots",
+            "zona de dormir", "camas",
+            "schlafbereich", "betten",
+            "zone de sommeil", "lits",
+            "寝る場所", "寝室", "ベッド",
+        ],
+        "where is the medical station?": [
+            "medical", "clinic", "doctor", "nurse",
+            "medico", "clinica",
+            "arzt", "klinik",
+            "medical", "clinique",
+            "医療", "診療所",
+        ],
+        "how do i register?": [
+            "registration", "sign up", "check in",
+            "registro", "inscribirme",
+            "registrierung", "anmeldung",
+            "inscription", "enregistrer",
+            "登録", "受付",
+        ],
+    }
+
+    updated = []
+    for art in db.query(KBArticle).all():
+        q = (art.question or "").strip().lower()
+        if q in tag_map:
+            existing = set(t.strip() for t in (art.tags or "").split(",") if t.strip())
+            new_tags = [t for t in tag_map[q] if t and t not in existing]
+            if new_tags:
+                art.tags = ",".join(list(existing) + new_tags)
+                art.last_updated = int(_time.time())
+                art.embedding = None
+                updated.append(art)
+
+    if not updated:
+        return
+
+    # Re-embed updated articles
+    embedder = None
+    try:
+        embedder = load_embedder()
+    except Exception:
+        embedder = None
+    for art in updated:
+        try:
+            if embedder:
+                text = get_embeddable_text(art)
+                vec = embedder.embed_text(text)
+                art.embedding = serialize_embedding(vec)
+            else:
+                art.embedding = None
+        except Exception:
+            # Leave embedding None; startup will attempt to fill missing
+            art.embedding = None
+
+    db.commit()
+    invalidate_corpus_cache()

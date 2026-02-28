@@ -7,7 +7,7 @@ function FAQManager({ isNew }) {
     const navigate = useNavigate();
     const { id } = useParams();
     const [formData, setFormData] = useState({
-        title: '', body: '', category: 'General', tags: [], enabled: true, status: 'draft'
+        question: '', answer: '', category: 'General', tags: [], enabled: true, status: 'draft'
     });
     const [loading, setLoading] = useState(false);
     const [isEvacSync, setIsEvacSync] = useState(false);
@@ -33,12 +33,12 @@ function FAQManager({ isNew }) {
             const found = res.data.articles.find(a => a.id === parseInt(id));
             if (found) {
                 setFormData({
-                    title: found.title,
-                    body: found.body,
+                    question: found.question,
+                    answer: found.answer,
                     category: found.category,
                     tags: found.tags || [],
                     enabled: found.enabled,
-                    status: found.status
+                    status: found.status || 'draft'
                 });
                 setIsEvacSync(found.source === 'evac_sync');
             }
@@ -127,10 +127,10 @@ function FAQManager({ isNew }) {
                     return;
                 }
 
-                // Validate each has title & body
-                const invalid = articles.filter(a => !a.title || !a.body);
+                // Validate each has question & answer
+                const invalid = articles.filter(a => !a.question || !a.answer);
                 if (invalid.length > 0) {
-                    setUploadError(`${invalid.length} article(s) are missing a title or body.`);
+                    setUploadError(`${invalid.length} article(s) are missing a question or answer.`);
                     setUploadState('error');
                     return;
                 }
@@ -225,8 +225,8 @@ function FAQManager({ isNew }) {
                             required
                             className="input"
                             placeholder="e.g. Where can I get food?"
-                            value={formData.title}
-                            onChange={e => setFormData({ ...formData, title: e.target.value })}
+                            value={formData.question}
+                            onChange={e => setFormData({ ...formData, question: e.target.value })}
                             disabled={isEvacSync}
                         />
                     </div>
@@ -237,8 +237,8 @@ function FAQManager({ isNew }) {
                             required
                             className="textarea"
                             placeholder="Provide a clear, helpful answer..."
-                            value={formData.body}
-                            onChange={e => setFormData({ ...formData, body: e.target.value })}
+                            value={formData.answer}
+                            onChange={e => setFormData({ ...formData, answer: e.target.value })}
                             disabled={isEvacSync}
                         />
                     </div>
@@ -266,15 +266,29 @@ function FAQManager({ isNew }) {
                         </div>
                     </div>
 
-                    <div className="checkbox-row" style={{ marginBottom: '1.5rem' }}>
-                        <input
-                            type="checkbox"
-                            checked={formData.enabled}
-                            onChange={e => setFormData({ ...formData, enabled: e.target.checked })}
-                            id="enabled"
-                            disabled={isEvacSync}
-                        />
-                        <label htmlFor="enabled">Enabled</label>
+                    <div className="grid-2" style={{ marginBottom: '1.5rem' }}>
+                        <div>
+                            <label>Status</label>
+                            <select
+                                className="input"
+                                value={formData.status}
+                                onChange={e => setFormData({ ...formData, status: e.target.value })}
+                                disabled={isEvacSync}
+                            >
+                                <option value="draft">Draft</option>
+                                <option value="published">Published</option>
+                            </select>
+                        </div>
+                        <div className="checkbox-row" style={{ marginBottom: 0, alignItems: 'center' }}>
+                            <input
+                                type="checkbox"
+                                checked={formData.enabled}
+                                onChange={e => setFormData({ ...formData, enabled: e.target.checked })}
+                                id="enabled"
+                                disabled={isEvacSync}
+                            />
+                            <label htmlFor="enabled">Enabled</label>
+                        </div>
                     </div>
 
                     <div className="flex justify-end gap-3" style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
@@ -402,8 +416,8 @@ function FAQManager({ isNew }) {
                                         <p className="font-semibold text-sm" style={{ marginBottom: '0.25rem' }}>Expected format:</p>
                                         <pre className="format-preview">{`[
   {
-    "title": "Where do I get food?",
-    "body": "Meals are served at...",
+    "question": "Where do I get food?",
+    "answer": "Meals are served at...",
     "category": "Food",
     "tags": ["meals", "food"],
     "status": "published",
@@ -433,7 +447,7 @@ function FAQManager({ isNew }) {
                                             <div key={i} className="upload-preview-item">
                                                 <span className="upload-preview-num">{i + 1}</span>
                                                 <div>
-                                                    <div className="font-medium text-sm">{art.title}</div>
+                                                    <div className="font-medium text-sm">{art.question}</div>
                                                     <div className="text-xs text-muted">{art.category || 'General'} · {(art.tags || []).length} tags</div>
                                                 </div>
                                             </div>

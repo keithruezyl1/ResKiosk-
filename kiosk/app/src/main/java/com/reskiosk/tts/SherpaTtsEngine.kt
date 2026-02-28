@@ -29,14 +29,15 @@ class SherpaTtsEngine private constructor(
                 "es" -> SherpaTtsEngine(context,
                     File(modelsBase, ModelConstants.TTS_DIR_ES),
                     onnxNameFromDir(ModelConstants.TTS_DIR_ES),
-                    speed = 0.92f)   // Spanish benefits from slightly slower pace
-                "tl" -> {
-                    Log.w("SherpaTTS", "No Filipino TTS model available; falling back to English")
-                    SherpaTtsEngine(context,
-                        File(modelsBase, ModelConstants.TTS_DIR_EN),
-                        onnxNameFromDir(ModelConstants.TTS_DIR_EN),
-                        speed = 0.95f)
-                }
+                    speed = 0.92f)
+                "de" -> SherpaTtsEngine(context,
+                    File(modelsBase, ModelConstants.TTS_DIR_DE),
+                    onnxNameFromDir(ModelConstants.TTS_DIR_DE),
+                    speed = 0.95f)
+                "fr" -> SherpaTtsEngine(context,
+                    File(modelsBase, ModelConstants.TTS_DIR_FR),
+                    onnxNameFromDir(ModelConstants.TTS_DIR_FR),
+                    speed = 0.95f)
                 "ja" -> {
                     Log.w("SherpaTTS", "No Japanese TTS model available; falling back to English")
                     SherpaTtsEngine(context,
@@ -44,10 +45,6 @@ class SherpaTtsEngine private constructor(
                         onnxNameFromDir(ModelConstants.TTS_DIR_EN),
                         speed = 0.90f)
                 }
-                "ko" -> SherpaTtsEngine(context,
-                    File(modelsBase, ModelConstants.TTS_DIR_KO),
-                    onnxNameFromDir(ModelConstants.TTS_DIR_KO),
-                    speed = 0.95f)
                 else -> SherpaTtsEngine(context,
                     File(modelsBase, ModelConstants.TTS_DIR_EN),
                     onnxNameFromDir(ModelConstants.TTS_DIR_EN),

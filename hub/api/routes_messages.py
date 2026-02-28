@@ -32,10 +32,8 @@ def _msg_to_response(msg: schema.HubMessage, db: Session) -> dict:
         "category_name": cat.category_name if cat else None,
         "source_hub_id": msg.source_hub_id,
         "source_hub_name": src.hub_name if src else None,
-        "source_device_id": src.device_id if src else None,
         "target_hub_id": msg.target_hub_id,
         "target_hub_name": tgt.hub_name if tgt else "Broadcast",
-        "target_device_id": tgt.device_id if tgt else None,
         "subject": msg.subject,
         "content": msg.content,
         "priority": msg.priority,
@@ -60,17 +58,13 @@ def list_messages(
     priority: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
-    this_hub = db.query(schema.Hub).first()
     q = db.query(schema.HubMessage).order_by(schema.HubMessage.sent_at.desc())
     if status:
         q = q.filter(schema.HubMessage.status == status)
     if priority:
         q = q.filter(schema.HubMessage.priority == priority)
     messages = q.limit(200).all()
-    return {
-        "this_hub_id": this_hub.hub_id if this_hub else None,
-        "messages": [_msg_to_response(m, db) for m in messages],
-    }
+    return {"messages": [_msg_to_response(m, db) for m in messages]}
 
 
 @router.get("/messages/categories")

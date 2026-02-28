@@ -44,11 +44,12 @@ async def create_article(
     db: Session = Depends(get_db),
 ):
     db_article = schema.KBArticle(
-        question=article.title,       # 'title' in API maps to 'question' in DB
-        answer=article.body,          # 'body' in API maps to 'answer' in DB
+        question=article.question,
+        answer=article.answer,
         category=article.category,
         tags=",".join(article.tags) if article.tags else "",
         enabled=1 if article.enabled else 0,
+        status=article.status or "draft",
         source="manual",
         created_at=int(time.time()),
         last_updated=int(time.time()),
@@ -76,11 +77,11 @@ async def update_article(
         raise HTTPException(status_code=403, detail="This article is managed by Shelter Config and cannot be edited here.")
 
     content_changed = False
-    if update.title is not None:
-        db_article.question = update.title
+    if update.question is not None:
+        db_article.question = update.question
         content_changed = True
-    if update.body is not None:
-        db_article.answer = update.body
+    if update.answer is not None:
+        db_article.answer = update.answer
         content_changed = True
     if update.category is not None:
         db_article.category = update.category
@@ -88,6 +89,8 @@ async def update_article(
         db_article.tags = ",".join(update.tags)
     if update.enabled is not None:
         db_article.enabled = 1 if update.enabled else 0
+    if update.status is not None:
+        db_article.status = update.status
 
     db_article.last_updated = int(time.time())
     _increment_kb_version(db)
@@ -155,6 +158,7 @@ async def update_evac_info(
 
     return row
 
+# ─── Publish (re-embed all) ──────────────────────────────────────────────────
 
 # ─── Publish (re-embed all) ──────────────────────────────────────────────────
 
@@ -189,7 +193,7 @@ async def publish_kb(db: Session = Depends(get_db)):
 
 @router.post("/admin/import")
 async def import_articles(payload: dict, db: Session = Depends(get_db)):
-    """Bulk import articles. Expects: { "articles": [{title, body, category, tags, enabled}, ...] }"""
+    """Bulk import articles. Expects: { "articles": [{question, answer, category, tags, enabled}, ...] }"""
     articles_data = payload.get("articles", [])
     if not isinstance(articles_data, list) or len(articles_data) == 0:
         raise HTTPException(status_code=400, detail="Expected a non-empty 'articles' array.")
@@ -207,11 +211,11 @@ async def import_articles(payload: dict, db: Session = Depends(get_db)):
 
     for i, data in enumerate(articles_data):
         try:
-            question = (data.get("title") or "").strip()
-            answer = (data.get("body") or "").strip()
+            question = (data.get("question") or "").strip()
+            answer = (data.get("answer") or "").strip()
             if not question or not answer:
                 skipped += 1
-                errors_list.append(f"Item {i+1}: missing title or body — skipped")
+                errors_list.append(f"Item {i+1}: missing question or answer — skipped")
                 continue
 
             article = schema.KBArticle(
@@ -220,6 +224,7 @@ async def import_articles(payload: dict, db: Session = Depends(get_db)):
                 category=data.get("category", "General"),
                 tags=",".join(data.get("tags", [])) if isinstance(data.get("tags"), list) else (data.get("tags") or ""),
                 enabled=1 if data.get("enabled", True) else 0,
+                status=data.get("status") or "draft",
                 source=data.get("source", "import"),
                 created_at=now,
                 last_updated=now,
@@ -236,7 +241,7 @@ async def import_articles(payload: dict, db: Session = Depends(get_db)):
             db.add(article)
             imported += 1
         except Exception as e:
-            errors_list.append(f"Item {i+1} ('{data.get('title', '?')}'): {e}")
+            errors_list.append(f"Item {i+1} ('{data.get('question', '?')}'): {e}")
 
     if imported > 0:
         _increment_kb_version(db)

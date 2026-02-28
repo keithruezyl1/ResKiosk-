@@ -11,11 +11,12 @@ class NetworkInfo(BaseModel):
 # ─── KB Articles ─────────────────────────────────────────────────────────────
 
 class ArticleBase(BaseModel):
-    title: str          # maps to KBArticle.question  (kept as 'title' for console compatibility)
-    body: str           # maps to KBArticle.answer    (kept as 'body' for console compatibility)
+    question: str
+    answer: str
     category: str
     tags: List[str] = []
     enabled: bool = True
+    status: Optional[str] = "draft"
 
     @field_validator('tags', mode='before')
     @classmethod
@@ -35,36 +36,36 @@ class ArticleCreate(ArticleBase):
 
 
 class ArticleUpdate(BaseModel):
-    title: Optional[str] = None
-    body: Optional[str] = None
+    question: Optional[str] = None
+    answer: Optional[str] = None
     category: Optional[str] = None
     tags: Optional[List[str]] = None
     enabled: Optional[bool] = None
+    status: Optional[str] = None
 
 
 class ArticleResponse(BaseModel):
     id: int
-    title: str          # served from KBArticle.question via alias below
-    body: str           # served from KBArticle.answer via alias below
+    question: str
+    answer: str
     category: Optional[str] = None
     tags: List[str] = []
     enabled: bool = True
     source: Optional[str] = None
     created_at: Optional[int] = None
     last_updated: Optional[int] = None
+    status: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
-    @field_validator('title', mode='before')
+    @field_validator('question', mode='before')
     @classmethod
-    def coerce_title(cls, v, info):
-        # When Pydantic reads from a KBArticle ORM object, 'title' field won't exist —
-        # but routes_admin maps question→title manually before returning, so this is fine.
+    def coerce_question(cls, v, info):
         return v or ""
 
-    @field_validator('body', mode='before')
+    @field_validator('answer', mode='before')
     @classmethod
-    def coerce_body(cls, v, info):
+    def coerce_answer(cls, v, info):
         return v or ""
 
     @field_validator('tags', mode='before')
@@ -109,6 +110,9 @@ class QueryRequest(BaseModel):
     is_retry: bool = False
     selected_category: Optional[str] = None
     session_id: Optional[str] = None
+    # Optional list of KB article IDs that should be excluded from consideration
+    exclude_source_ids: Optional[List[int]] = None
+
 
 
 class QueryResponse(BaseModel):
@@ -119,7 +123,30 @@ class QueryResponse(BaseModel):
     kb_version: int
     source_id: Optional[int] = None
     clarification_categories: Optional[List[str]] = None
+    # ID of the QueryLog row corresponding to this response (for RLHF feedback)
+    query_log_id: Optional[int] = None
+    # Shadow RLHF fields: what the RLHF ranker would pick as top, if enabled
+    rlhf_top_source_id: Optional[int] = None
+    rlhf_top_score: Optional[float] = None
 
+
+# ─── Evac Info ───────────────────────────────────────────────────────────────
+
+class EvacInfoResponse(BaseModel):
+    id: int
+    food_schedule: Optional[str] = None
+    sleeping_zones: Optional[str] = None
+    medical_station: Optional[str] = None
+    registration_steps: Optional[str] = None
+    announcements: Optional[str] = None
+    emergency_mode: Optional[str] = None
+    last_updated: Optional[str] = None
+    metadata: Optional[str] = Field(None, alias="info_metadata", serialization_alias="metadata")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+# ─── Emergency ───────────────────────────────────────────────────────────────
 
 # ─── Evac Info ───────────────────────────────────────────────────────────────
 
@@ -146,8 +173,49 @@ class EmergencyRequest(BaseModel):
     transcript: Optional[str] = None
     language: str = "en"
     timestamp: Optional[int] = None
+    tier: Optional[int] = 1
+    alert_id_local: Optional[str] = None
+    retry_count: Optional[int] = 0
 
 
+class EmergencyResolveRequest(BaseModel):
+    resolution_notes: Optional[str] = None
+    resolved_by: Optional[str] = None
+
+
+class EmergencyStatusResponse(BaseModel):
+    id: int
+    status: str
+    acknowledged_at: Optional[int] = None
+    responding_at: Optional[int] = None
+    dismissed_at: Optional[int] = None
+    dismissed_by_kiosk: Optional[int] = None
+    resolved_at: Optional[int] = None
+
+
+class FeedbackRequest(BaseModel):
+    """Feedback signal from kiosk for RLHF-style ranking."""
+    session_id: Optional[str] = None
+    query_log_id: int
+    source_id: Optional[int] = None
+    label: int  # -1=inaccurate (v1), +1=thumbs-up (future v2)
+    language: str
+    kiosk_id: Optional[str] = None
+    center_id: Optional[str] = None
+
+
+# ─── Structured Config ────────────────────────────────────────────────────────
+
+class StructuredConfigUpsert(BaseModel):
+    value: Any
+
+
+class StructuredConfigResponse(BaseModel):
+    key: str
+    value: Any
+    updated_at: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
 # ─── Hub Messaging ───────────────────────────────────────────────────────────
 
 class MessageCreate(BaseModel):
@@ -193,7 +261,6 @@ class CategoryResponse(BaseModel):
 
 class HubResponse(BaseModel):
     hub_id: int
-    device_id: Optional[str] = None
     hub_name: str
     location: Optional[str] = None
 

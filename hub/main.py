@@ -81,6 +81,18 @@ def _prewarm_models():
     except Exception as e:
         print(f"[Startup] Embedding warmup failed: {e}")
 
+    # Warm NLLB translator so translation failures surface at startup instead of
+    # on the first non-English query, and to reduce latency for that first call.
+    try:
+        from hub.retrieval import translator
+        model, tokenizer = translator._load_model()
+        if model is not None:
+            print("[Startup] NLLB translator ready.")
+        else:
+            print("[Startup] WARNING: NLLB translator not available — translation disabled.")
+    except Exception as e:
+        print(f"[Startup] NLLB warmup failed (non-fatal): {e}")
+
     def _warm_ollama():
         try:
             from hub.retrieval.formatter import check_ollama_available, OLLAMA_URL, MODEL_NAME

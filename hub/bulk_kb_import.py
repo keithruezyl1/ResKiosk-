@@ -41,8 +41,8 @@ def bulk_import(file_path: str):
 
     for data in articles_data:
         try:
-            if "title" not in data or "body" not in data:
-                print(f"Skipping article missing title or body: {data.get('title', 'Unknown')}")
+            if "question" not in data or "answer" not in data:
+                print(f"Skipping article missing question or answer: {data.get('question', 'Unknown')}")
                 error_count += 1
                 continue
 
@@ -52,8 +52,8 @@ def bulk_import(file_path: str):
             tags_str = ",".join(tags_raw) if isinstance(tags_raw, list) else (tags_raw or "")
 
             article = schema.KBArticle(
-                question=data["title"],
-                answer=data["body"],
+                question=data["question"],
+                answer=data["answer"],
                 category=data.get("category", "General"),
                 tags=tags_str,
                 enabled=1 if data.get("enabled", True) else 0,
@@ -76,7 +76,7 @@ def bulk_import(file_path: str):
                 print(f"Processed {imported_count} articles...")
 
         except Exception as e:
-            print(f"Error importing article '{data.get('title', 'Unknown')}': {e}")
+            print(f"Error importing article '{data.get('question', 'Unknown')}': {e}")
             error_count += 1
 
     # Bump SystemVersion

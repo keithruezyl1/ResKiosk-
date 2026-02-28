@@ -50,12 +50,22 @@ function App() {
         localStorage.setItem('theme', darkMode ? 'dark' : 'light');
     }, [darkMode]);
 
+    const isTruthy = (v) => {
+        if (v === true) return true;
+        if (typeof v === 'string') {
+            const s = v.trim().toLowerCase();
+            return s === 'true' || s === '1' || s === 'yes';
+        }
+        if (typeof v === 'number') return v === 1;
+        return false;
+    };
+
     useEffect(() => {
         const checkStatus = async () => {
             try {
                 await hubClient.get('/admin/ping');
                 const snap = await hubClient.get('/kb/snapshot');
-                if (snap.data.structured_config && snap.data.structured_config.emergency_mode === true) {
+                if (snap.data.structured_config && isTruthy(snap.data.structured_config.emergency_mode)) {
                     setEmergencyMode(true);
                 } else {
                     setEmergencyMode(false);
@@ -73,7 +83,10 @@ function App() {
         const fetchAlerts = async () => {
             try {
                 const res = await hubClient.get('/emergency/active');
-                setActiveAlertCount((res.data.alerts || []).length);
+                const onlyActive = (res.data.alerts || []).filter(
+                    (a) => (a?.status || 'ACTIVE').toUpperCase() === 'ACTIVE'
+                );
+                setActiveAlertCount(onlyActive.length);
             } catch (e) { }
         };
         fetchAlerts();

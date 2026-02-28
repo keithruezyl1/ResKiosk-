@@ -13,7 +13,7 @@ Rules:
 - Keep the response to 2-4 sentences maximum.
 - Use simple, calm language appropriate for stressed evacuees.
 - If you don't know the answer, say so honestly and suggest asking a volunteer.
-- Respond in plain conversational English only — no bullet points, no lists, no markdown."""
+- Respond in plain conversational English only - no bullet points, no lists, no markdown."""
 
 
 def direct_answer(query: str) -> str:
@@ -65,23 +65,42 @@ def direct_answer(query: str) -> str:
         return "I'm sorry, I'm having trouble right now. Please ask a volunteer for help."
 
 
-FORMAT_SYSTEM_PROMPT = """You are a response formatter for an evacuation center information system.
+FORMAT_SYSTEM_PROMPT = """You are Reze, the response formatter for an evacuation center information system.
 You will be given a verified knowledge base entry as JSON containing 'question' and 'answer' fields.
-Your only job is to rewrite the 'answer' into a short, clear, spoken response — 2 to 4 sentences maximum.
-The 'question' field is for context only.
+Your only job is to rewrite the 'answer' into a short, clear, spoken response. The 'question' field is for context only.
 
 Rules:
 - Do NOT add any information not present in the 'answer' field.
 - Do NOT speculate, infer, or expand beyond what is written.
-- Use simple, calm language appropriate for stressed evacuees.
-- Respond in plain conversational English only — no bullet points, no lists, no markdown.
+- Use calm, reassuring language appropriate for stressed evacuees.
+- Respond in plain conversational English only - no bullet points, no lists, no markdown.
+- Keep the response to 2-3 sentences maximum.
+- If include_intro is true, start with a short intro like "I'm Reze." and then give the answer.
 - If the text is already short and clear, return it with minimal changes."""
 
 
-def format_response(kb_article_json: str, query: str = "", history_str: str = "") -> str:
+def _postprocess_formatted(text: str, fallback: str) -> str:
+    """Enforce plain text rules: no bullets/markdown, 2-3 sentences max."""
+    if not text or not text.strip():
+        return fallback
+
+    cleaned = text.replace("*", " ").replace("-", " ").replace("•", " ")
+    cleaned = cleaned.replace("`", "").replace("#", "").replace("_", " ")
+    cleaned = " ".join(cleaned.split())
+
+    import re
+    sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    if not sentences:
+        return fallback
+    trimmed = " ".join(sentences[:3])
+    return trimmed.strip() if trimmed.strip() else fallback
+
+
+def format_response(kb_article_json: str, query: str = "", history_str: str = "", include_intro: bool = False) -> str:
     """
     Formats a verified KB article (JSON string) into a spoken response using LLM.
-    The LLM is strictly constrained to only reformat — never generate new content.
+    The LLM is strictly constrained to only reformat - never generate new content.
     Falls back to raw article body on error/timeout.
     """
     if not kb_article_json:
@@ -92,8 +111,8 @@ def format_response(kb_article_json: str, query: str = "", history_str: str = ""
     try:
         import json
         parsed = json.loads(kb_article_json)
-        # Use 'answer' (new schema) or 'body' (legacy fallback/api model)
-        fallback_text = parsed.get("answer", parsed.get("body", kb_article_json))
+        # Use 'answer' field from the KB article JSON
+        fallback_text = parsed.get("answer", kb_article_json)
     except Exception:
         pass
 
@@ -101,7 +120,7 @@ def format_response(kb_article_json: str, query: str = "", history_str: str = ""
     prompt_content = f"KB Entry:\n{kb_article_json}\n\n"
     if history_str:
         prompt_content += f"Previous Conversation Context:\n{history_str}\n\n"
-    prompt_content += f"User's Question: {query}\n\nFormatted spoken response:"
+    prompt_content += f"User's Question: {query}\n\ninclude_intro: {str(include_intro).lower()}\n\nFormatted spoken response:"
 
     payload = {
         "model": MODEL_NAME,
@@ -126,7 +145,9 @@ def format_response(kb_article_json: str, query: str = "", history_str: str = ""
         response.raise_for_status()
         result = response.json()
         formatted = result.get("message", {}).get("content", "").strip()
-        return formatted if formatted else fallback_text
+        if not formatted:
+            print("[Formatter] Empty LLM response, using raw KB text.")
+        return _postprocess_formatted(formatted, fallback_text)
     except Exception as e:
         print(f"[Formatter] Ollama unavailable ({e}), using raw KB text.")
         return fallback_text

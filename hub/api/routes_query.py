@@ -1,7 +1,8 @@
 import time
 import asyncio
 import logging
-from fastapi import APIRouter, Depends
+import json
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from hub.db.session import get_db
 from hub.db import schema
@@ -17,30 +18,54 @@ router = APIRouter()
 session_history = {}
 
 
+# Pipeline: Kiosk sends user text -> Hub receives -> if not English translate to EN (NLLB)
+# -> semantic search -> top result -> LLM format -> if not English translate answer back (NLLB)
+# -> return to kiosk -> kiosk TTS.
+
+
 @router.post("/query", response_model=api_models.QueryResponse)
 async def submit_query(query: api_models.QueryRequest, db: Session = Depends(get_db)):
     start_time = time.time()
     try:
         user_language = query.language or "en"
         raw_text = (query.transcript_english or query.transcript_original).strip()
-        logger.info(f"[Query] Incoming: lang={user_language} raw='{raw_text[:80]}'")
+        logger.info(f"[Query] Incoming: lang={user_language} raw='{raw_text[:80]}' is_retry={query.is_retry} exclude_source_ids={query.exclude_source_ids}")
 
-        # Translate to English if needed
+        # Non-English: translate input to EN for search; after retrieval/LLM, translate answer back to user language (below)
         if user_language != "en":
             try:
                 text = translator.translate(raw_text, user_language, "en")
-                logger.info(f"[Query] Translated ({user_language}→en): '{text[:80]}'")
+                logger.info(f"[Query] Translated ({user_language}->en): '{text[:80]}'")
             except Exception as e:
                 logger.error(f"[Query] Inbound translation failed: {e}")
                 text = raw_text
         else:
             text = raw_text
 
+        # Apply raw-language normalization as a fallback enrichment for non-English
+        if user_language != "en":
+            try:
+                raw_norm = normalize_query(raw_text, user_language)
+                if raw_norm and raw_norm not in text:
+                    text = f"{text} {raw_norm}".strip()
+            except Exception:
+                pass
+
         normalize_query(text)  # kept for side-effects / logging
 
         try:
             t1 = time.time()
-            result = search.retrieve(db, text, query.is_retry, query.selected_category)
+            query_lang = "en"
+            if user_language != "en" and text == raw_text:
+                query_lang = user_language
+            result = search.retrieve(
+                db,
+                text,
+                query.is_retry,
+                query.selected_category,
+                query.exclude_source_ids,
+                query_language=query_lang,
+            )
             logger.info(f"[Query] Retrieval took {(time.time() - t1) * 1000:.0f}ms")
         except Exception as e:
             logger.error(f"[Query] Retrieval error: {e}")
@@ -55,18 +80,31 @@ async def submit_query(query: api_models.QueryRequest, db: Session = Depends(get
                 "intent_confidence": 0.0,
             }
 
+        # Track rewrite state for logging
+        rewritten_text = text
+        rewrite_happened = False
+
         # Query rewrite on low-confidence results
         if result["answer_type"] in ("NO_MATCH", "NEEDS_CLARIFICATION"):
-            rewritten = query_rewriter.maybe_rewrite(
+            candidate = query_rewriter.maybe_rewrite(
                 text,
                 result.get("intent", "unclear"),
                 result["confidence"],
             )
-            if rewritten != text:
+            if candidate != text:
                 try:
-                    retry_result = search.retrieve(db, rewritten, False, None)
-                    logger.info(f"[Query] Rewrite: '{text[:40]}' → '{rewritten[:40]}' → {retry_result['answer_type']}")
+                    retry_result = search.retrieve(
+                        db,
+                        candidate,
+                        False,
+                        None,
+                        query.exclude_source_ids,
+                        query_language=query_lang,
+                    )
+                    logger.info(f"[Query] Rewrite retry: '{text[:40]}' -> '{candidate[:40]}' -> {retry_result['answer_type']}")
                     result = retry_result
+                    rewritten_text = candidate
+                    rewrite_happened = True
                 except Exception as e:
                     logger.warning(f"[Query] Rewrite retry failed: {e}")
 
@@ -75,13 +113,21 @@ async def submit_query(query: api_models.QueryRequest, db: Session = Depends(get
 
         if answer_type == "DIRECT_MATCH" and result.get("article_data"):
             history_str = ""
-            if query.session_id and query.session_id in session_history:
-                import json
+            # Do not use session history if this is a retry, as the LLM will see the disliked answer
+            # and may lazily hallucinate and repeat the exact same response instead of using the new KB article.
+            if query.session_id and query.session_id in session_history and not query.is_retry:
                 history_str = json.dumps(session_history[query.session_id][-3:], ensure_ascii=False)
             import json
             article_json = json.dumps(result["article_data"], ensure_ascii=False)
             try:
-                answer_text = await asyncio.to_thread(formatter.format_response, article_json, text, history_str)
+                include_intro = bool(query.session_id) and (query.session_id not in session_history) and not query.is_retry
+                answer_text = await asyncio.to_thread(
+                    formatter.format_response,
+                    article_json,
+                    text,
+                    history_str,
+                    include_intro=include_intro,
+                )
             except Exception as e:
                 logger.error(f"[Query] Formatter error: {e}")
                 answer_text = result["article_data"].get("answer", result["answer_text"])
@@ -98,27 +144,44 @@ async def submit_query(query: api_models.QueryRequest, db: Session = Depends(get
         answer_text_localized = None
         if user_language != "en" and answer_text:
             try:
-                answer_text_localized = translator.translate(answer_text, "en", user_language)
-                logger.info(f"[Query] Translated to {user_language}: '{answer_text_localized[:80]}...'")
+                translated = translator.translate(answer_text, "en", user_language)
+                # If translation returns the same text, treat it as a no-op so the
+                # client does not mistake English for a localized answer.
+                if translated and translated.strip() != answer_text.strip():
+                    answer_text_localized = translated
+                    logger.info(f"[Query] Translated to {user_language}: '{answer_text_localized[:80]}...'")
+                else:
+                    answer_text_localized = None
+                    logger.info(f"[Query] Translation to {user_language} produced no change; using English answer.")
             except Exception as e:
                 logger.error(f"[Query] Translation failed: {e}")
 
-        # Log to query_logs
+        query_log_id = None
         try:
             import time as _time
             log_entry = schema.QueryLog(
                 kiosk_id=query.kiosk_id or "",
+                session_id=query.session_id,
+                rlhf_top_source_id=result.get("rlhf_top_source_id"),
+                rlhf_top_score=result.get("rlhf_top_score"),
                 transcript_original=query.transcript_original,
                 transcript_english=text,
+                raw_transcript=raw_text,
+                normalized_transcript=text,
                 language=user_language,
                 kb_version=query.kb_version,
+                retrieval_score=float(result.get("confidence_raw") or result.get("confidence") or 0.0),
                 answer_type=answer_type,
+                source_id=result.get("source_id"),
+                rewrite_attempted=True if rewrite_happened else False,
+                rewritten_query=rewritten_text if rewrite_happened else None,
                 latency_ms=round(latency, 2),
                 created_at=int(_time.time()),
             )
             db.add(log_entry)
             db.commit()
-        except Exception:
+            query_log_id = log_entry.id
+        except Exception as e:
             logger.exception("[Query] DB log/commit failed")
             db.rollback()
 
@@ -135,6 +198,9 @@ async def submit_query(query: api_models.QueryRequest, db: Session = Depends(get
             kb_version=query.kb_version,
             source_id=result.get("source_id"),
             clarification_categories=result.get("categories"),
+            query_log_id=query_log_id,
+            rlhf_top_source_id=result.get("rlhf_top_source_id"),
+            rlhf_top_score=result.get("rlhf_top_score"),
         )
 
     except Exception:
@@ -157,3 +223,26 @@ async def end_session(session_id: str):
         logger.info(f"Session {session_id} deleted.")
         return {"status": "success", "message": "Session ended."}
     return {"status": "ok", "message": "Session not found."}
+
+
+@router.post("/feedback")
+async def submit_feedback(feedback: api_models.FeedbackRequest, db: Session = Depends(get_db)):
+    """Record kiosk feedback for RLHF-style ranking. Fire-and-forget on the kiosk side."""
+    try:
+        entry = schema.FeedbackLog(
+            session_id=feedback.session_id,
+            query_log_id=feedback.query_log_id,
+            source_id=feedback.source_id,
+            label=feedback.label,
+            language=feedback.language,
+            kiosk_id=feedback.kiosk_id,
+            center_id=feedback.center_id,
+        )
+        db.add(entry)
+        db.commit()
+        return {"status": "ok"}
+    except Exception:
+        logger.exception("[Feedback] DB log/commit failed")
+        db.rollback()
+        # Surface an error to callers; kiosk treats this as non-blocking.
+        raise HTTPException(status_code=500, detail="Failed to record feedback")

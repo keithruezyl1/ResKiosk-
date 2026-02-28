@@ -216,6 +216,11 @@ The call is suspendable and runs on the IO dispatcher, so it does not block the 
 
 Every return dict includes `intent` and `intent_confidence` for logging and the optional rewriter.
 
+For **non-English queries** (e.g., Spanish "Comida que se sirve"), the same retrieval and gating logic is used after the hub has translated the text to English in `routes_query.submit_query()`. An `answer_type` of `NO_MATCH` in the hub logs means:
+
+- NLLB translation and MiniLM retrieval ran successfully, **but** the best similarity score fell below `CLARIFICATION_FLOOR` (or the corpus/embeddings were unavailable), so the system returned the fixed fallback answer rather than guessing.
+- The kiosk still receives a valid response (`answer_type="NO_MATCH"`, generic fallback text), which is then spoken in the user’s selected language via NLLB + TTS.
+
 ---
 
 ## Phase 6: Hub Response Assembly and Logging
@@ -277,6 +282,60 @@ So the user hears the response via the device TTS (Sherpa TTS engine), and when 
 ### 7.3 Clarification retry path
 
 If the user was in Clarification and taps a category, [MainKioskScreen.kt](reskiosk/kiosk/app/src/main/java/com/reskiosk/ui/MainKioskScreen.kt) calls `viewModel.selectClarification(option)`. In the ViewModel, `selectClarification(category)` (lines 297–312) calls `performQuery(lastQueryEnglish, lastQueryOriginal, isRetry = true, category = category)`. The hub then runs retrieval again with the same transcript plus the selected category (enrichment in `search.retrieve()`), and the response is spoken as above.
+
+---
+
+## Semantic search tuning guide
+
+This section summarizes the recommended configuration and how to use logs to tune multilingual semantic search. It corresponds to the `optimize-semantic-search-multilingual` plan.
+
+### Recommended defaults
+
+- **Embedder**: MiniLM-L6-v2 via `SecureEmbedder` (current `hub/retrieval/embedder.py` behavior).
+- **Thresholds** (can be overridden by environment variables):
+  - `RESKIOSK_SIM_THRESHOLD` (DIRECT_MATCH gate): **0.60**
+  - `RESKIOSK_CLARIFICATION_FLOOR` (clarification / fallback floor): **0.40**
+- **Query normalization**:
+  - Kiosk-side: `SttPostProcessor.process()` (handles fillers, fuzzy domain words, and phrase corrections).
+  - Hub-side: `hub/retrieval/normalizer.normalize_query()` (lowercase, deduplicate, time normalization, domain-specific phrasing fixes such as “where is food being served” → “where is food served”).
+- **Intent enrichment**:
+  - `INTENT_ENRICHMENT` in `hub/retrieval/search.py` includes realistic language for core intents such as food, registration, medical, and sleeping so that MiniLM sees both KB wording and typical user phrasings in the search query.
+
+### How to collect retrieval scores from logs
+
+1. Run the hub and kiosk against a real or test KB so queries are logged.
+2. For each test question (English or non-English), look for the following in the hub logs:
+   - `[Query] Incoming: lang=... raw='...'`
+   - `[Query] Inbound translated (...->en): '...'`
+   - `[Retrieve] query='...'`
+   - `[Search] #1 score=... title='...' cat=...`
+   - Final `answer_type` and `confidence` in the QueryLog row (see `hub/db/schema.py`).
+3. Record for each query:
+   - Original text and language.
+   - Translated English text.
+   - Top article title and category.
+   - Best similarity score.
+   - `answer_type` (`DIRECT_MATCH`, `NEEDS_CLARIFICATION`, or `NO_MATCH`).
+4. Classify misses using the plan’s rubric:
+   - **T1** — Translation odd but still on-topic.
+   - **T2** — Translation OK but score too low despite a good article.
+   - **T3** — No strong article (KB content gap).
+
+Use these observations to decide whether to:
+
+- Adjust KB wording (titles, bodies, tags) for important intents so they better match how people actually ask questions.
+- Further tweak `RESKIOSK_SIM_THRESHOLD` / `RESKIOSK_CLARIFICATION_FLOOR` via environment variables.
+- Extend `INTENT_ENRICHMENT` and `_HUB_CORRECTIONS` if NLLB consistently prefers certain synonyms.
+
+### KB authoring tips for better retrieval
+
+When editing KB articles in the admin UI:
+
+- **Titles**: Include question-like phrases users actually say, e.g., “Where is food being served?” instead of only “Food schedule”.
+- **Bodies**: Start with 1–2 concise sentences that restate the question in natural language before giving the answer.
+- **Tags**: Add key nouns and phrases surfaced in logs (e.g., `food, meals, canteen, cafeteria, registration table`).
+
+Because all non-English queries are translated to English before retrieval, optimizing the **English KB content and thresholds** improves behavior for every supported language.
 
 ---
 

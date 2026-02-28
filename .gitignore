@@ -1,3 +1,4 @@
+env/
 venv/
 __pycache__/
 *.pyc
@@ -24,7 +25,4 @@ kiosk/.gradle/
 # Local model bundles and Ollama data
 packaging/hub_models/
 packaging/ollama_portable/
-
-/TO RUN
-*TO RUN
 

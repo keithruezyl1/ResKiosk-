@@ -257,16 +257,22 @@ function KBViewer() {
                                         {a.enabled ? 'ENABLED' : 'DISABLED'}
                                     </span>
                                 </td>
-                                <td className="text-muted text-sm">{new Date(a.updated_at).toLocaleDateString()}</td>
+                                <td className="text-muted text-sm">{a.last_updated ? new Date(a.last_updated * 1000).toLocaleString() : '—'}</td>
                                 <td>
-                                    <div className="flex gap-1">
-                                        <Link to={`/faq/${a.id}/edit`} className="btn btn-icon" title="Edit">
-                                            <Edit size={15} style={{ color: 'var(--primary)' }} />
-                                        </Link>
-                                        <button onClick={() => handleDelete(a.id)} className="btn btn-icon" title="Delete">
-                                            <Trash2 size={15} style={{ color: 'var(--danger)' }} />
-                                        </button>
-                                    </div>
+                                    {a.source === 'evac_sync' ? (
+                                        <span className="badge badge-info" style={{ fontSize: '0.65rem', opacity: 0.7 }} title="Managed via Shelter Config">
+                                            Shelter Config
+                                        </span>
+                                    ) : (
+                                        <div className="flex gap-1">
+                                            <Link to={`/faq/${a.id}/edit`} className="btn btn-icon" title="Edit">
+                                                <Edit size={15} style={{ color: 'var(--primary)' }} />
+                                            </Link>
+                                            <button onClick={() => handleDelete(a.id)} className="btn btn-icon" title="Delete">
+                                                <Trash2 size={15} style={{ color: 'var(--danger)' }} />
+                                            </button>
+                                        </div>
+                                    )}
                                 </td>
                             </tr>
                         ))}

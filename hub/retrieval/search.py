@@ -83,12 +83,23 @@ _shelter_config_cache = None
 
 
 def get_shelter_config(db: Session) -> dict:
-    """Load full structured_config as dict; cached and invalidated on publish."""
+    """Load evac_info row as a flat dict; cached and invalidated on publish."""
     global _shelter_config_cache
     if _shelter_config_cache is not None:
         return _shelter_config_cache
-    rows = db.query(schema.StructuredConfig).all()
-    _shelter_config_cache = {r.key: r.get_value() for r in rows}
+    row = db.query(schema.EvacInfo).filter(schema.EvacInfo.id == 1).first()
+    if row:
+        _shelter_config_cache = {
+            "food_schedule": row.food_schedule,
+            "sleeping_zones": row.sleeping_zones,
+            "medical_station": row.medical_station,
+            "registration_steps": row.registration_steps,
+            "announcements": row.announcements,
+            "emergency_mode": row.emergency_mode,
+            "metadata": row.info_metadata,
+        }
+    else:
+        _shelter_config_cache = {}
     return _shelter_config_cache
 
 
@@ -101,13 +112,15 @@ def invalidate_shelter_config_cache():
 
 def _snapshot_article(art: schema.KBArticle) -> dict:
     """Eagerly copy all needed fields from an ORM object into a plain dict.
-    This prevents DetachedInstanceError when the cache outlives the session."""
+    Prevents DetachedInstanceError when the cache outlives the session."""
+    raw_tags = getattr(art, "tags", "") or ""
+    tags_list = [t.strip() for t in raw_tags.split(",") if t.strip()]
     return {
         "id": art.id,
-        "title": art.title,
-        "body": art.body,
+        "question": art.question,
+        "answer": art.answer,
         "category": art.category,
-        "tags": art.get_tags() if hasattr(art, 'get_tags') else [],
+        "tags": tags_list,
     }
 
 
@@ -119,7 +132,7 @@ def _load_corpus(db: Session) -> dict:
     if _corpus_cache is not None:
         return _corpus_cache
     
-    articles = db.query(schema.KBArticle).filter(schema.KBArticle.enabled == True).all()
+    articles = db.query(schema.KBArticle).filter(schema.KBArticle.enabled == 1).all()
     embeddings = []
     meta = []
     for art in articles:
@@ -142,25 +155,7 @@ def retrieve(db: Session, query_english: str, is_retry: bool, selected_category:
     normalized_query = normalize_query(query_english)
     logger.info(f"[Retrieve] query='{normalized_query}'")
 
-    # 1. Direct Config Match
-    config_match = db.query(schema.StructuredConfig).filter(schema.StructuredConfig.key == normalized_query).first()
-    if config_match:
-        try:
-            val_str = str(config_match.get_value())
-            return {
-                "answer_text": val_str,
-                "answer_type": "DIRECT_MATCH",
-                "confidence": 1.0,
-                "source_id": None,
-                "categories": None,
-                "article_data": None,
-                "intent": "unclear",
-                "intent_confidence": 0.0,
-            }
-        except Exception as e:
-            logger.warning(f"[Retrieve] Config get_value failed for key={normalized_query}: {e}")
-
-    # 2. Inventory check (phrase triggers; no embedding)
+    # 1. Inventory check (phrase triggers; no embedding)
     try:
         shelter_config = get_shelter_config(db)
         inventory_answer = inventory_module.check_inventory(normalized_query, shelter_config)
@@ -304,7 +299,7 @@ def retrieve(db: Session, query_english: str, is_retry: bool, selected_category:
         top_k_results.append(RetrievalResult(art_dict, score))
 
     for i, r in enumerate(top_k_results[:3]):
-        logger.info(f"[Search] #{i+1} score={r.score:.4f} title='{r.article['title'][:60]}' cat={r.category}")
+        logger.info(f"[Search] #{i+1} score={r.score:.4f} question='{r.article['question'][:60]}' cat={r.category}")
 
     best = top_k_results[0]
 
@@ -316,14 +311,14 @@ def retrieve(db: Session, query_english: str, is_retry: bool, selected_category:
     # 6. Gating: >= 0.65 DIRECT_MATCH; 0.45-0.65 use best; < 0.45 + unclear -> clarify; else NO_MATCH
     if best.score >= THRESHOLD:
         return {
-            "answer_text": best.article["body"],
+            "answer_text": best.article["answer"],
             "answer_type": "DIRECT_MATCH",
             "confidence": best.score,
             "source_id": best.article["id"],
             "categories": None,
             "article_data": {
-                "title": best.article["title"],
-                "body": best.article["body"],
+                "question": best.article["question"],
+                "answer": best.article["answer"],
                 "category": best.article["category"],
                 "tags": best.article.get("tags", [])
             },
@@ -350,14 +345,14 @@ def retrieve(db: Session, query_english: str, is_retry: bool, selected_category:
     # 0.45-0.65: use best match; < 0.45 or no clarify: fixed fallback
     if best.score >= CLARIFICATION_FLOOR:
         return {
-            "answer_text": best.article["body"],
+            "answer_text": best.article["answer"],
             "answer_type": "DIRECT_MATCH",
             "confidence": best.score,
             "source_id": best.article["id"],
             "categories": None,
             "article_data": {
-                "title": best.article["title"],
-                "body": best.article["body"],
+                "question": best.article["question"],
+                "answer": best.article["answer"],
                 "category": best.article["category"],
                 "tags": best.article.get("tags", [])
             },

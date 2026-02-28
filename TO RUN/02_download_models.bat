@@ -6,7 +6,7 @@ REM Detect /c in the original cmd line; if present and not already wrapped, rela
 echo %cmdcmdline% | find /i "/c" >nul
 IF NOT ERRORLEVEL 1 (
     IF /I "%~1" NEQ "inner" (
-        start "" cmd /k "%~f0 inner"
+        start "" cmd /k call "%~f0" inner
         GOTO :EOF
     )
     SHIFT
@@ -28,7 +28,6 @@ REM 1. Ensure virtual environment exists
 IF NOT EXIST "venv\Scripts\python.exe" (
     ECHO ERROR: Python virtual environment not found.
     ECHO Please run "01_install_deps.bat" first.
-    PAUSE
     EXIT /B 1
 )
 
@@ -44,7 +43,6 @@ ECHO     - NLLB-200 translation model
 ECHO     - Ollama LLM: configured in packaging/bundle_models.py
 ECHO.
 
-set HF_HUB_DISABLE_SYMLINKS_WARNING=1
 python "packaging\bundle_models.py"
 IF %ERRORLEVEL% NEQ 0 (
     ECHO.
@@ -61,7 +59,6 @@ IF %ERRORLEVEL% NEQ 0 (
     ECHO       * Then re-run this script.
     ECHO.
     ECHO The hub can still run once these folders contain valid models.
-    PAUSE
     EXIT /B 1
 )
 
@@ -77,5 +74,5 @@ ECHO   Model download complete.
 ECHO   Next: Run "start_hub.vbs" (or double-click start_hub) to start the Hub.
 ECHO ========================================================
 ECHO.
-PAUSE
+
 

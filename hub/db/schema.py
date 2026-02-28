@@ -124,47 +124,16 @@ class SystemVersion(Base):
     last_published = Column(Integer)  # Unix timestamp
 
 
-class User(Base):
-    """Admin users who can log in and manage the system."""
-    __tablename__ = "user"
-
-    user_id  = Column(Integer, primary_key=True, autoincrement=True)
-    fname    = Column(Text)
-    mname    = Column(Text)
-    lname    = Column(Text)
-    password = Column(Text)  # Should be hashed
-
 
 class Hub(Base):
     """Registry of all Shelter Hubs / evacuation centers."""
     __tablename__ = "hub"
 
     hub_id     = Column(Integer, primary_key=True, autoincrement=True)
+    device_id  = Column(Text, unique=True)   # Unique hardware/device identifier
     hub_name   = Column(Text, nullable=False, unique=True)
     location   = Column(Text)
     created_at = Column(Integer)  # Unix timestamp
-
-
-class Kiosk(Base):
-    """Physical kiosk/tablet devices registered under a hub."""
-    __tablename__ = "kiosk"
-
-    kiosk_id   = Column(Integer, primary_key=True, autoincrement=True)
-    hub_id     = Column(Integer, ForeignKey("hub.hub_id"), nullable=False)
-    kiosk_name = Column(Text)
-    location   = Column(Text)
-    status     = Column(Text)   # 'online', 'offline', 'maintenance'
-    last_seen  = Column(Integer)  # Unix timestamp
-    created_at = Column(Integer)  # Unix timestamp
-
-
-class Category(Base):
-    """Preloaded message categories for hub-to-hub messaging."""
-    __tablename__ = "categories"
-
-    category_id   = Column(Integer, primary_key=True, autoincrement=True)
-    category_name = Column(Text, nullable=False, unique=True)
-    description   = Column(Text)
 
 
 class HubMessage(Base):
@@ -188,6 +157,54 @@ class HubMessage(Base):
     ttl            = Column(Integer)
     received_via   = Column(Text)     # 'lora', 'manual', 'wifi-local'
     details        = Column(Text)     # JSON for category-specific fields
+
+
+class LoraConfig(Base):
+    """Persisted ESP+LoRa connection settings so the hub can auto-reconnect."""
+    __tablename__ = "lora_config"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    port            = Column(Text)
+    baud_rate       = Column(Integer, default=115200)
+    connection_type = Column(Text, default="serial")   # 'serial' or 'bluetooth'
+    auto_connect    = Column(Integer, default=0)        # 1 = reconnect on startup
+    last_connected  = Column(Integer)                   # Unix timestamp
+
+
+
+
+class User(Base):
+    """Admin users who can log in and manage the system."""
+    __tablename__ = "user"
+
+    user_id  = Column(Integer, primary_key=True, autoincrement=True)
+    fname    = Column(Text)
+    mname    = Column(Text)
+    lname    = Column(Text)
+    password = Column(Text)  # Should be hashed
+
+
+
+class Kiosk(Base):
+    """Physical kiosk/tablet devices registered under a hub."""
+    __tablename__ = "kiosk"
+
+    kiosk_id   = Column(Integer, primary_key=True, autoincrement=True)
+    hub_id     = Column(Integer, ForeignKey("hub.hub_id"), nullable=False)
+    kiosk_name = Column(Text)
+    location   = Column(Text)
+    status     = Column(Text)   # 'online', 'offline', 'maintenance'
+    last_seen  = Column(Integer)  # Unix timestamp
+    created_at = Column(Integer)  # Unix timestamp
+
+
+class Category(Base):
+    """Preloaded message categories for hub-to-hub messaging."""
+    __tablename__ = "categories"
+
+    category_id   = Column(Integer, primary_key=True, autoincrement=True)
+    category_name = Column(Text, nullable=False, unique=True)
+    description   = Column(Text)
 
 
 class EmergencyAlert(Base):

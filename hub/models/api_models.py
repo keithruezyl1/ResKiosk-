@@ -114,6 +114,7 @@ class QueryRequest(BaseModel):
     exclude_source_ids: Optional[List[int]] = None
 
 
+
 class QueryResponse(BaseModel):
     answer_text_en: str
     answer_text_localized: Optional[str] = None
@@ -128,6 +129,24 @@ class QueryResponse(BaseModel):
     rlhf_top_source_id: Optional[int] = None
     rlhf_top_score: Optional[float] = None
 
+
+# ─── Evac Info ───────────────────────────────────────────────────────────────
+
+class EvacInfoResponse(BaseModel):
+    id: int
+    food_schedule: Optional[str] = None
+    sleeping_zones: Optional[str] = None
+    medical_station: Optional[str] = None
+    registration_steps: Optional[str] = None
+    announcements: Optional[str] = None
+    emergency_mode: Optional[str] = None
+    last_updated: Optional[str] = None
+    metadata: Optional[str] = Field(None, alias="info_metadata", serialization_alias="metadata")
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+# ─── Emergency ───────────────────────────────────────────────────────────────
 
 # ─── Evac Info ───────────────────────────────────────────────────────────────
 

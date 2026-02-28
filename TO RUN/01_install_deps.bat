@@ -6,7 +6,7 @@ REM Detect /c in the original cmd line; if present and not already wrapped, rela
 echo %cmdcmdline% | find /i "/c" >nul
 IF NOT ERRORLEVEL 1 (
     IF /I "%~1" NEQ "inner" (
-        start "" cmd /k "%~f0 inner"
+        start "" cmd /k call "%~f0" inner
         GOTO :EOF
     )
     SHIFT
@@ -31,7 +31,6 @@ IF %ERRORLEVEL% NEQ 0 (
     ECHO ERROR: Python is not installed or not in PATH.
     ECHO Please install Python 3.10+ from https://www.python.org/downloads/
     ECHO Make sure to check "Add Python to PATH" during installation.
-    PAUSE
     EXIT /B 1
 )
 ECHO Python found.
@@ -43,7 +42,6 @@ IF NOT EXIST "venv" (
     python -m venv venv
     IF %ERRORLEVEL% NEQ 0 (
         ECHO ERROR: Failed to create virtual environment.
-        PAUSE
         EXIT /B 1
     )
     ECHO venv created.
@@ -55,10 +53,9 @@ REM 3. Install Python dependencies
 ECHO.
 ECHO [3/5] Installing Python dependencies from requirements.txt...
 call "venv\Scripts\activate.bat"
-pip install -r requirements.txt
+pip install --no-input -r requirements.txt
 IF %ERRORLEVEL% NEQ 0 (
     ECHO ERROR: Failed to install Python dependencies.
-    PAUSE
     EXIT /B 1
 )
 
@@ -72,7 +69,7 @@ IF %ERRORLEVEL% NEQ 0 (
 ) ELSE (
     ECHO Node.js found.
     cd console
-    call npm install
+    call npm install --yes
     IF %ERRORLEVEL% NEQ 0 (
         ECHO WARNING: npm install failed. Check Node.js/npm installation.
         ECHO You can rerun this script after fixing Node.js.
@@ -95,5 +92,5 @@ ECHO   Dependency installation complete.
 ECHO   Next: Run "02_download_models.bat"
 ECHO ========================================================
 ECHO.
-PAUSE
+
 

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from hub.api import routes_system, routes_kb, routes_admin, routes_query, routes_network, routes_emergency, routes_messages
+from hub.api import routes_system, routes_kb, routes_admin, routes_query, routes_network, routes_emergency, routes_messages, routes_lora
 from hub.db.init_db import init_db
 
 app = FastAPI(title="ResKiosk Hub", version="0.2")
@@ -22,6 +22,7 @@ def on_startup():
     init_db()
     _embed_missing_articles()
     _prewarm_models()
+    _lora_auto_connect()
 
 
 def _embed_missing_articles():
@@ -113,6 +114,15 @@ def _prewarm_models():
     threading.Thread(target=_warm_ollama, daemon=True).start()
 
 
+def _lora_auto_connect():
+    """Attempt to reconnect to a previously-used ESP+LoRa device."""
+    try:
+        from hub.api.routes_lora import startup_auto_connect
+        startup_auto_connect()
+    except Exception as e:
+        print(f"[Startup] LoRa auto-connect skipped: {e}")
+
+
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
@@ -134,6 +144,7 @@ app.include_router(routes_admin.router)
 app.include_router(routes_query.router)
 app.include_router(routes_emergency.router)
 app.include_router(routes_messages.router)
+app.include_router(routes_lora.router)
 
 # Serve console/dist as static files
 base = get_base_path()

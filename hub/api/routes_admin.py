@@ -158,6 +158,7 @@ async def update_evac_info(
 
     return row
 
+# ─── Publish (re-embed all) ──────────────────────────────────────────────────
 
 # ─── Publish (re-embed all) ──────────────────────────────────────────────────
 

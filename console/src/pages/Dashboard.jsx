@@ -3,7 +3,7 @@ import hubClient from '../api/hubClient';
 import logoSvg from '../assets/reskiosk-logo.svg';
 
 function Dashboard({ setEmergencyMode }) {
-    const [stats, setStats] = useState({ kb_version: 0, online: false, article_count: 0, hub_id: '' });
+    const [stats, setStats] = useState({ kb_version: 0, online: false, article_count: 0, device_id: '' });
     const [loading, setLoading] = useState(true);
     const [isEmergency, setIsEmergency] = useState(false);
 
@@ -26,7 +26,7 @@ function Dashboard({ setEmergencyMode }) {
                 kb_version: snap.kb_version,
                 online: true,
                 article_count: articles.filter(a => a.enabled).length,
-                hub_id: netRes.data.hub_id || ''
+                device_id: netRes.data.device_id || ''
             });
 
             const em = config.emergency_mode === 'active';
@@ -87,12 +87,12 @@ function Dashboard({ setEmergencyMode }) {
                 </div>
             </div>
 
-            {/* Hub ID */}
-            {stats.hub_id && (
+            {/* Device ID */}
+            {stats.device_id && (
                 <div className="card">
-                    <div className="stat-label">Hub ID</div>
-                    <div className="font-mono text-sm" style={{ wordBreak: 'break-all' }}>{stats.hub_id}</div>
-                    <p className="text-sm text-muted mt-1">Use this to identify this hub (e.g. multi-site or support).</p>
+                    <div className="stat-label">Device ID</div>
+                    <div className="font-mono text-sm" style={{ wordBreak: 'break-all' }}>{stats.device_id}</div>
+                    <p className="text-sm text-muted mt-1">Use this to identify this device (e.g. multi-site or support).</p>
                 </div>
             )}
 

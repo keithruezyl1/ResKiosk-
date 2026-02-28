@@ -6,7 +6,7 @@ REM Detect /c in the original cmd line; if present and not already wrapped, rela
 echo %cmdcmdline% | find /i "/c" >nul
 IF NOT ERRORLEVEL 1 (
     IF /I "%~1" NEQ "inner" (
-        start "" cmd /k "%~f0 inner"
+        start "" cmd /k call "%~f0" inner
         GOTO :EOF
     )
     SHIFT

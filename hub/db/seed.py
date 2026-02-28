@@ -1,6 +1,15 @@
 import time
+import uuid
+import platform
 from sqlalchemy.orm import Session
 from hub.db.schema import SystemVersion, EvacInfo, KBArticle, Category, Hub
+
+
+def _generate_device_id() -> str:
+    """Derive a stable device ID from the machine's hostname + node (MAC-based)."""
+    node_hex = format(uuid.getnode(), '012x')
+    host = platform.node() or "hub"
+    return f"{host}-{node_hex}"
 
 
 def seed_data(db: Session):
@@ -25,9 +34,19 @@ def seed_data(db: Session):
         print("Seeded message categories.")
 
     # 3. Ensure this hub exists in the hub table
-    if db.query(Hub).count() == 0:
-        db.add(Hub(hub_name="This Hub", location="Local", created_at=int(time.time())))
-        print("Seeded default hub entry.")
+    this_hub = db.query(Hub).first()
+    if not this_hub:
+        device_id = _generate_device_id()
+        db.add(Hub(
+            device_id=device_id,
+            hub_name="This Hub",
+            location="Local",
+            created_at=int(time.time()),
+        ))
+        print(f"Seeded default hub entry (device_id={device_id}).")
+    elif not this_hub.device_id:
+        this_hub.device_id = _generate_device_id()
+        print(f"Back-filled device_id={this_hub.device_id} on existing hub.")
 
     # 4. Ensure EvacInfo row exists (replaces StructuredConfig defaults)
     evac = db.query(EvacInfo).filter(EvacInfo.id == 1).first()

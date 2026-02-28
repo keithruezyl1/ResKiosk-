@@ -51,6 +51,7 @@ async def get_network_info(db: Session = Depends(get_db)):
         "ip": final_ip,
         "hub_ip": final_ip,
         "hub_id": hub_id,
+        "device_id": device_id,
         "port": port,
         "network_mode": network_mode,
         "connected_kiosks": connected_count,
